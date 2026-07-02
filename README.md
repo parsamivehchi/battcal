@@ -104,6 +104,26 @@ HOLD_SECS=7200  # hold at 100% (default 3600)
 POLL=15         # check interval seconds (default 30)
 ```
 
+## Genius Bar prep & evidence report
+
+The dashboard has a collapsible "Genius Bar prep" card that turns BattCal's telemetry
+into an honest, printable AppleCare evidence one-pager. It leads with the macOS
+"Maximum Capacity" number and Condition flag (what Apple actually decides on), then
+documents real behavioral evidence computed from telemetry: estimated runtime,
+internal resistance (pack voltage vs current slope), any unexpected shutdowns
+(telemetry gaps at healthy charge), temperature ranges, and the degradation-vs-cycles
+projection. If the data shows no symptoms, it says so plainly and states the honest
+odds. "Start prep cycle" runs a full 5-100% calibration pass the evening before an
+appointment so macOS re-estimates capacity (it nudges the real number, it does not
+fake it). "Print / Save PDF" isolates the report for printing.
+
+The engine also fires a one-time macOS notification if the battery Condition ever
+changes to "Service Recommended" (the moment to book a visit).
+
+This is deliberately honest: it never fabricates symptoms and never suggests claiming
+the battery was drained to game the 80% threshold. Raw-gauge numbers are shown only as
+secondary "for your records" data, because Apple dismisses third-party readings.
+
 ## The charger light is the status light
 
 BattCal drives the MagSafe LED so the connector itself tells you what is happening

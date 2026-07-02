@@ -53,6 +53,22 @@ mode() {
 
 pct() { pmset -g batt | grep -Eo '[0-9]+%' | head -1 | tr -d '%'; }
 
+LAST_CONDITION=""
+# Watch macOS "Condition" (Normal / Service Recommended). When it flips to
+# Service Recommended, notify once - that is the moment to go to the Genius Bar.
+check_condition() {
+  local c
+  c=$(system_profiler SPPowerDataType 2>/dev/null | sed -n 's/.*Condition: *//p' | head -1)
+  [ -z "$c" ] && return
+  if [ -n "$LAST_CONDITION" ] && [ "$c" != "$LAST_CONDITION" ]; then
+    log "battery Condition changed: $LAST_CONDITION -> $c"
+    if echo "$c" | grep -qi 'service'; then
+      osascript -e "display notification \"macOS now flags this battery: $c. Book a Genius Bar visit.\" with title \"BattCal\" sound name \"Glass\"" >/dev/null 2>&1
+    fi
+  fi
+  LAST_CONDITION=$c
+}
+
 fully_charged() {
   ioreg -rn AppleSmartBattery | sed -n 's/^ *"FullyCharged" = \(.*\)$/\1/p'
 }
@@ -192,6 +208,7 @@ while true; do
   if [ -z "$P" ]; then sleep "$POLL"; continue; fi
 
   log_telemetry "$STATE" "$P"
+  check_condition
 
   case "$STATE" in
     drain)

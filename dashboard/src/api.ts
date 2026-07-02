@@ -21,6 +21,8 @@ export interface Status {
   cycles: number | null;
   designCycles: number;
   appleHealth: string | number | null;
+  condition: string | null;
+  prep: { active: boolean; startedAt: number | null } | null;
   updatedAt: string;
 }
 
@@ -50,6 +52,21 @@ export interface CycleRow {
   duration_min?: number | string;
 }
 
+export interface Evidence {
+  macos: { capacity: string | number | null; condition: string | null };
+  raw: { pct: number | null; mah: number | null; designMah: number | null; note: string };
+  cycles: number | null;
+  runtime: { hours: number; atWatts: number; note: string } | null;
+  resistanceMohm: number | null;
+  resistanceElevated: boolean;
+  shutdowns: Array<{ at: string; pct: number; gapMin: number }>;
+  tempRange: { min: number; max: number } | null;
+  projection: { lostPct: number; cyclesNow: number; perCycle: number; designCycles: number; projectedAtDesign: number } | null;
+  symptomsFound: boolean;
+  startedTracking: string | null;
+  generatedAt: string;
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
@@ -63,3 +80,6 @@ export const fetchLog = (lines = 120) => get<string[]>(`/api/log?lines=${lines}`
 export const postPause = () => fetch('/api/pause', { method: 'POST' });
 export const postResume = () => fetch('/api/resume', { method: 'POST' });
 export const postMode = (mode: Mode) => fetch(`/api/mode?mode=${mode}`, { method: 'POST' });
+export const fetchEvidence = () => get<Evidence>('/api/evidence');
+export const postPrep = () => fetch('/api/prep', { method: 'POST' });
+export const endPrep = () => fetch('/api/prep', { method: 'DELETE' });

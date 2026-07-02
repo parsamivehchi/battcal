@@ -21,6 +21,7 @@ const NAMESPACES = [
     state: '/var/tmp/battery-calibrate.state',
     pause: '/var/tmp/battery-calibrate.pause',
     mode: '/var/tmp/battery-calibrate.mode',
+    prep: '/var/tmp/battery-calibrate.prep',
     cycles: join(HOME, 'Library/Logs/battery-calibrate-history.csv'),
     log: join(HOME, 'Library/Logs/battery-calibrate.log'),
   },
@@ -28,6 +29,7 @@ const NAMESPACES = [
     state: '/var/tmp/battcal.state',
     pause: '/var/tmp/battcal.pause',
     mode: '/var/tmp/battcal.mode',
+    prep: '/var/tmp/battcal.prep',
     cycles: join(HOME, 'Library/Logs/battcal-history.csv'),
     log: join(HOME, 'Library/Logs/battcal.log'),
   },
@@ -84,11 +86,23 @@ function status() {
   const cyclesRows = readCsv(n.cycles);
   const lastCycle = cyclesRows.at(-1) || null;
   const mode = readMode(n);
+  let condition = null;
+  try {
+    const sp = execFileSync('/usr/sbin/system_profiler', ['SPPowerDataType'], { encoding: 'utf8' });
+    const cm = sp.match(/Condition:\s*(.+)/);
+    condition = cm ? cm[1].trim() : null;
+  } catch {}
+  let prep = null;
+  try {
+    if (existsSync(n.prep)) prep = { active: true, startedAt: Number(readFileSync(n.prep, 'utf8').trim()) || null };
+  } catch {}
   return {
     state: paused ? 'paused' : state,
     paused,
     mode,
     band: BANDS[mode],
+    condition,
+    prep,
     pct,
     charging,
     plugged: adapter !== null && Number(adapter[1]) > 0,
@@ -147,6 +161,89 @@ function logTail(lines) {
   return all.filter((l) => /^\d{4}-\d{2}-\d{2} /.test(l)).slice(-lines);
 }
 
+// Honest evidence for a Genius Bar visit, computed from real telemetry + history.
+// Behavioral symptoms are the operative lever; macOS-reported numbers lead. If the
+// data shows nothing wrong, this reports exactly that.
+function evidence() {
+  const n = ns();
+  const rows = readCsv(TELEMETRY).filter((r) => typeof r.ts === 'string');
+  const st = status();
+  const design = st.designMah;
+  const nomV = st.rawMah && st.designMah ? 11.4 : 11.4; // MBP14 3S pack nominal ~11.4V
+
+  // Discharge segments: median battery watts while draining, -> runtime estimate.
+  const drain = rows.filter((r) => r.state === 'drain' && Number(r.battery_W) < 0);
+  const drainW = drain.map((r) => Math.abs(Number(r.battery_W))).filter((w) => w > 0.5).sort((a, b) => a - b);
+  const medW = drainW.length ? drainW[Math.floor(drainW.length / 2)] : null;
+  // Use CURRENT usable capacity (raw full-charge mAh), not design, for honest runtime.
+  const usableWh = st.rawMah ? (st.rawMah / 1000) * nomV : (design ? (design / 1000) * nomV : null);
+  const runtimeHrs = medW && usableWh ? +(usableWh / medW).toFixed(1) : null;
+
+  // Internal resistance: slope of pack voltage (mV) vs current (mA) via least squares.
+  const pts = rows.map((r) => ({ v: Number(r.voltage_mV), i: Number(r.amperage_mA) }))
+    .filter((p) => Number.isFinite(p.v) && Number.isFinite(p.i) && p.v > 0);
+  let resistanceMohm = null;
+  if (pts.length > 20) {
+    const n2 = pts.length;
+    const sx = pts.reduce((a, p) => a + p.i, 0);
+    const sy = pts.reduce((a, p) => a + p.v, 0);
+    const sxx = pts.reduce((a, p) => a + p.i * p.i, 0);
+    const sxy = pts.reduce((a, p) => a + p.i * p.v, 0);
+    const denom = n2 * sxx - sx * sx;
+    if (Math.abs(denom) > 1e-6) {
+      // slope mV per mA = ohms; *1000 = mOhm. Positive: V rises with (signed) current.
+      const slope = (n2 * sxy - sx * sy) / denom;
+      resistanceMohm = +(Math.abs(slope) * 1000).toFixed(1);
+    }
+  }
+  const resistanceElevated = resistanceMohm !== null && resistanceMohm > 250; // conservative
+
+  // Unexpected shutdowns: telemetry gaps > 10 min while charge was healthy (>15%) and not paused.
+  const shutdowns = [];
+  for (let k = 1; k < rows.length; k++) {
+    const prevT = new Date(rows[k - 1].ts).getTime();
+    const curT = new Date(rows[k].ts).getTime();
+    const gapMin = (curT - prevT) / 60000;
+    if (gapMin > 10 && Number(rows[k - 1].pct) > 15 && rows[k - 1].state !== 'paused') {
+      shutdowns.push({ at: rows[k - 1].ts, pct: Number(rows[k - 1].pct), gapMin: Math.round(gapMin) });
+    }
+  }
+
+  // Temperature ranges.
+  const temps = rows.map((r) => Number(r.temp_C)).filter(Number.isFinite);
+  const tRange = temps.length ? { min: Math.min(...temps), max: Math.max(...temps) } : null;
+
+  // Degradation projection from history (macOS + raw).
+  const hist = readCsv(n.cycles).filter((r) => typeof r.date === 'string');
+  const first = hist[0];
+  const rawNow = st.rawHealthPct;
+  const cyclesNow = st.cycles;
+  const designCycles = st.designCycles;
+  let projection = null;
+  if (rawNow != null && cyclesNow) {
+    const lostPct = 100 - rawNow;
+    const perCycle = cyclesNow > 0 ? lostPct / cyclesNow : 0;
+    const atDesign = +(100 - perCycle * designCycles).toFixed(0);
+    projection = { lostPct: +lostPct.toFixed(1), cyclesNow, perCycle: +perCycle.toFixed(3), designCycles, projectedAtDesign: atDesign };
+  }
+
+  const symptomsFound = shutdowns.length > 0 || resistanceElevated;
+  return {
+    macos: { capacity: st.appleHealth, condition: st.condition },
+    raw: { pct: st.rawHealthPct, mah: st.rawMah, designMah: st.designMah, note: 'For your records only. Apple decides on the macOS number above, not this.' },
+    cycles: cyclesNow,
+    runtime: runtimeHrs ? { hours: runtimeHrs, atWatts: medW, note: 'Estimated from the load measured during cycling (near-idle), not a stress test.' } : null,
+    resistanceMohm,
+    resistanceElevated,
+    shutdowns,
+    tempRange: tRange,
+    projection,
+    symptomsFound,
+    startedTracking: first ? first.date : (rows[0] ? rows[0].ts : null),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon',
@@ -192,6 +289,20 @@ createServer((req, res) => {
     if (p === '/api/telemetry') return json(res, 200, telemetry(Number(url.searchParams.get('hours') || 24)));
     if (p === '/api/cycles') return json(res, 200, readCsv(ns().cycles));
     if (p === '/api/log') return json(res, 200, logTail(Number(url.searchParams.get('lines') || 120)));
+    if (p === '/api/evidence') return json(res, 200, evidence());
+    if (p === '/api/prep' && req.method === 'POST') {
+      const n = ns();
+      writeFileSync(n.mode, 'calibration\n');
+      try { unlinkSync(n.pause); } catch {}
+      writeFileSync(n.prep, String(Math.floor(Date.now() / 1000)) + '\n');
+      return json(res, 200, { prep: true, mode: 'calibration' });
+    }
+    if (p === '/api/prep' && req.method === 'DELETE') {
+      const n = ns();
+      try { unlinkSync(n.prep); } catch {}
+      writeFileSync(n.mode, 'longevity\n');
+      return json(res, 200, { prep: false, mode: 'longevity' });
+    }
     if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); return json(res, 200, { paused: true }); }
     if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} return json(res, 200, { paused: false }); }
     if (p === '/api/mode' && req.method === 'POST') {

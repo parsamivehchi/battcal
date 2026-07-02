@@ -8,6 +8,7 @@ import {
   fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postMode, postPause, postResume,
 } from './api';
 import { fmtTimeTick, niceTimeTicks, powerStep, steppedScale } from './chartUtils';
+import { GeniusBarPrep } from './GeniusBarPrep';
 
 const RANGES = [
   { label: '3h', hours: 3 },
@@ -407,6 +408,8 @@ export default function App() {
             move as the gauge re-learns; expect wobble, judge by the multi-day trend.</p>
         </div>
       </div>
+
+      <GeniusBarPrep status={status} onChange={refreshStatus} />
 
       {story && (
         <div className="card">
