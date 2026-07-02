@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
   CycleRow, Mode, Status, TelemetryRow,
-  fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postMode, postPause, postResume,
+  fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postBreak, postMode, postPause, postResume,
 } from './api';
 import { fmtTimeTick, niceTimeTicks, powerStep, steppedScale } from './chartUtils';
 import { GeniusBarPrep } from './GeniusBarPrep';
@@ -36,6 +36,11 @@ function stateMeta(s: Status | null) {
 }
 
 interface Pt { t: number; pct: number; w: number; temp: number; state: string }
+
+const fmtDur = (ms: number): string => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
 
 const eventClass = (line: string): string => {
   if (/DRAIN|drain/.test(line)) return 'ev-drain';
@@ -126,6 +131,17 @@ export default function App() {
 
   useEffect(() => { refreshStatus(); const id = setInterval(refreshStatus, 15000); return () => clearInterval(id); }, [refreshStatus]);
   useEffect(() => { refreshData(hours); const id = setInterval(() => refreshData(hours), 60000); return () => clearInterval(id); }, [hours, refreshData]);
+
+  // 1s countdown clock, ticking only while a throttle banner or benchmark break is on screen.
+  const [now, setNow] = useState(() => Date.now());
+  const discharging = status?.state === 'drain';
+  const breakUntilMs = status?.breakUntil != null ? status.breakUntil * 1000 : null;
+  const breakActive = breakUntilMs != null && breakUntilMs > now;
+  useEffect(() => {
+    if (!discharging && breakUntilMs == null) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [discharging, breakUntilMs]);
 
   const switchMode = async (m: Mode) => {
     await postMode(m);
@@ -254,6 +270,24 @@ export default function App() {
       </header>
 
       {err && <div className="err">Cannot reach the BattCal engine API: {err}</div>}
+
+      {breakActive ? (
+        <div className="banner banner-break">
+          <div className="banner-text">
+            <b>Benchmark break active.</b> Full speed now, calibration resumes in {fmtDur(breakUntilMs! - now)}. Run Geekbench.
+          </div>
+          <button className="action" onClick={async () => { await postResume(); refreshStatus(); }}>Resume calibration now</button>
+        </div>
+      ) : discharging ? (
+        <div className="banner banner-warn">
+          <div className="banner-text">
+            <b>CPU is power-throttled.</b> {status?.plugged
+              ? 'BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as the battery drops.'
+              : 'On battery. CPU-heavy benchmarks score lower than plugged in, and worse as the battery drops.'}
+          </div>
+          <button className="action primary" onClick={async () => { await postBreak(30); refreshStatus(); }}>Benchmark break (30 min)</button>
+        </div>
+      ) : null}
 
       <section className="tiles">
         <div className="tile"><div className="label">Battery</div><div className="value">{status?.pct ?? '--'}<small>%</small></div>

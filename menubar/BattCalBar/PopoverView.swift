@@ -32,6 +32,14 @@ struct PopoverView: View {
                 Spacer()
             }
 
+            // Throttle warning while draining, or a live countdown during a break.
+            // The 1s TimelineView only spins up when one of them is on screen.
+            if model.isDischarging || model.breakUntil != nil {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    bannerContent(now: ctx.date)
+                }
+            }
+
             // 3h sparkline
             if !model.spark.isEmpty {
                 Chart(model.spark) {
@@ -139,6 +147,54 @@ struct PopoverView: View {
             parts.append(s?.mode == "calibration" ? "charger LED pulses green" : "charger LED dark = BattCal draining")
         }
         return parts.joined(separator: " · ")
+    }
+
+    // Picks the right banner for the current power state: a live countdown while a
+    // benchmark break runs, otherwise a power-throttle warning while draining.
+    @ViewBuilder private func bannerContent(now: Date) -> some View {
+        if let remaining = model.breakRemaining(asOf: now) {
+            banner(tint: .blue, icon: "bolt.fill",
+                   title: "Benchmark break active",
+                   message: "Full speed now. Resumes calibration in \(fmtDuration(remaining)). Run Geekbench.",
+                   actionTitle: "Resume calibration now") { model.resume() }
+        } else if model.isDischarging {
+            let onBattery = model.status?.plugged != true
+            banner(tint: .orange, icon: "exclamationmark.triangle.fill",
+                   title: "CPU is power-throttled",
+                   message: onBattery
+                       ? "On battery. CPU-heavy benchmarks score lower than plugged in, and worse as the battery drops."
+                       : "BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as % drops.",
+                   actionTitle: "Benchmark break (30 min)") { model.benchmarkBreak(minutes: 30) }
+        }
+    }
+
+    private func banner(tint: Color, icon: String, title: String, message: String,
+                        actionTitle: String, action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).foregroundStyle(tint).font(.system(size: 14, weight: .semibold))
+                Text(title).font(.callout.weight(.semibold))
+                Spacer()
+            }
+            Text(message).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: action) {
+                Text(actionTitle).font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                    .background(tint.opacity(0.9), in: RoundedRectangle(cornerRadius: 7))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(!model.reachable)
+            .opacity(model.reachable ? 1 : 0.5)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.35), lineWidth: 1))
+    }
+
+    private func fmtDuration(_ secs: Int) -> String {
+        String(format: "%d:%02d", secs / 60, secs % 60)
     }
 
     private func stat(_ label: String, _ value: String) -> some View {

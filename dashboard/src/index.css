@@ -222,3 +222,15 @@ table.data tr:last-child td { border-bottom: none; }
   background: var(--surface-1); border: 1px solid var(--status-critical); color: var(--text-primary);
   border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
 }
+
+/* Power-throttle warning while draining + live countdown during a benchmark break. */
+.banner {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  background: var(--surface-1); border: 1px solid var(--border); color: var(--text-primary);
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 16px;
+}
+.banner .banner-text { flex: 1 1 320px; font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
+.banner .banner-text b { color: var(--text-primary); }
+.banner .action { white-space: nowrap; }
+.banner-warn { border-color: var(--status-serious); background: rgba(236, 131, 90, 0.10); }
+.banner-break { border-color: var(--series-1); background: var(--accent-wash); }

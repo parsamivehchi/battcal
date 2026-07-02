@@ -20,6 +20,7 @@ enum LabelStyle: String, CaseIterable, Identifiable {
 struct EngineStatus: Codable {
     var state: String
     var paused: Bool
+    var breakUntil: Int?   // unix epoch a timed benchmark break auto-resumes at; nil = indefinite pause / none
     var mode: String
     var band: Band
     var pct: Int?
@@ -106,6 +107,32 @@ final class BattCalModel: ObservableObject {
 
     func pause() { post("api/pause") }
     func resume() { post("api/resume") }
+
+    // Timed "benchmark break": pause calibration now, auto-resume after `minutes`.
+    // Uses a relative URL with a query (not post(), which would encode the "?").
+    func benchmarkBreak(minutes: Int) {
+        Task {
+            var req = URLRequest(url: URL(string: "api/break?minutes=\(minutes)", relativeTo: base)!)
+            req.httpMethod = "POST"
+            _ = try? await URLSession.shared.data(for: req)
+            refresh()
+        }
+    }
+
+    // True while the engine has cut the adapter and the SoC runs off the battery,
+    // i.e. macOS is power-throttling the CPU (benchmarks/heavy compute score low).
+    var isDischarging: Bool { reachable && engineLoaded && status?.state == "drain" }
+
+    // Epoch a timed benchmark break auto-resumes at (nil when none is active).
+    var breakUntil: Int? { status?.breakUntil }
+
+    // Seconds left in an active timed benchmark break, or nil if none. Pass the
+    // TimelineView clock so the countdown ticks smoothly while the popover is open.
+    func breakRemaining(asOf now: Date = Date()) -> Int? {
+        guard let until = status?.breakUntil else { return nil }
+        let left = until - Int(now.timeIntervalSince1970)
+        return left > 0 ? left : nil
+    }
     func setMode(_ m: String) {
         Task {
             var req = URLRequest(url: URL(string: "api/mode?mode=\(m)", relativeTo: base)!)
@@ -225,7 +252,7 @@ final class BattCalModel: ObservableObject {
     // we show the mode word, not a redundant % (Apple's own icon shows that).
     func menuLabel(for style: LabelStyle) -> String? {
         if style == .iconOnly { return nil }
-        guard reachable else { return "—" }
+        guard reachable else { return "\u{2014}" }
         switch activeMode {
         case .off: return "off"
         case .normal: return "normal"

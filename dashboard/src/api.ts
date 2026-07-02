@@ -3,6 +3,7 @@ export type Mode = 'longevity' | 'calibration';
 export interface Status {
   state: string;
   paused: boolean;
+  breakUntil: number | null;   // unix epoch a timed benchmark break auto-resumes at; null = indefinite pause / none
   mode: Mode;
   band: { low: number; high: number };
   pct: number | null;
@@ -79,6 +80,7 @@ export const fetchCycles = () => get<CycleRow[]>('/api/cycles');
 export const fetchLog = (lines = 120) => get<string[]>(`/api/log?lines=${lines}`);
 export const postPause = () => fetch('/api/pause', { method: 'POST' });
 export const postResume = () => fetch('/api/resume', { method: 'POST' });
+export const postBreak = (minutes: number) => fetch(`/api/break?minutes=${minutes}`, { method: 'POST' });
 export const postMode = (mode: Mode) => fetch(`/api/mode?mode=${mode}`, { method: 'POST' });
 export const fetchEvidence = () => get<Evidence>('/api/evidence');
 export const postPrep = () => fetch('/api/prep', { method: 'POST' });

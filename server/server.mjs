@@ -83,6 +83,15 @@ function status() {
   let state = 'stopped';
   try { state = readFileSync(n.state, 'utf8').trim(); } catch {}
   const paused = existsSync(n.pause);
+  // A numeric epoch in the pause file = a timed "benchmark break" (auto-resumes);
+  // an empty pause file = an indefinite Normal-charging pause.
+  let breakUntil = null;
+  if (paused) {
+    try {
+      const t = Number(readFileSync(n.pause, 'utf8').trim());
+      if (Number.isFinite(t) && t > 0) breakUntil = t;
+    } catch {}
+  }
   const cyclesRows = readCsv(n.cycles);
   const lastCycle = cyclesRows.at(-1) || null;
   const mode = readMode(n);
@@ -99,6 +108,7 @@ function status() {
   return {
     state: paused ? 'paused' : state,
     paused,
+    breakUntil,
     mode,
     band: BANDS[mode],
     condition,
@@ -305,6 +315,14 @@ createServer((req, res) => {
     }
     if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); return json(res, 200, { paused: true }); }
     if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} return json(res, 200, { paused: false }); }
+    if (p === '/api/break' && req.method === 'POST') {
+      // Timed benchmark break: pause now, auto-resume after N minutes. The engine
+      // honors the epoch, so the break ends even with every UI closed.
+      const mins = Math.max(1, Math.min(240, Math.round(Number(url.searchParams.get('minutes')) || 30)));
+      const until = Math.floor(Date.now() / 1000) + mins * 60;
+      writeFileSync(ns().pause, String(until) + '\n');
+      return json(res, 200, { paused: true, breakUntil: until, minutes: mins });
+    }
     if (p === '/api/mode' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => { body += c; });

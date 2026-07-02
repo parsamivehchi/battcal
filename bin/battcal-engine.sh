@@ -16,6 +16,9 @@
 # Mode file:  /var/tmp/battcal.mode   (longevity when absent)
 # Pause:      touch /var/tmp/battcal.pause   (instant normal charging)
 # Resume:     rm /var/tmp/battcal.pause
+# Benchmark break (timed pause, auto-resumes): write a future unix epoch into the
+#             pause file, e.g. echo $(( $(date +%s) + 1800 )) > /var/tmp/battcal.pause
+#             (empty file = indefinite pause; a numeric epoch resumes once it passes)
 # Off:        launchctl bootout gui/$(id -u)/com.battcal.calibrate ; batt adapter enable
 # Watch:      tail -f ~/Library/Logs/battcal.log
 # History:    ~/Library/Logs/battcal-history.csv (one row per cycle)
@@ -170,16 +173,24 @@ fi
 AWAITING_AC=0
 
 while true; do
-  # User pause switch
+  # User pause switch. Empty file = indefinite pause (normal charging). A numeric
+  # future epoch = timed "benchmark break": auto-resume once now passes it, so a
+  # full-speed benchmark window closes itself even if every UI is shut.
   if [ -f "$PAUSE_FILE" ]; then
-    if [ "$(cat "$STATE_FILE")" != "paused" ]; then
-      log "PAUSED by user - adapter re-enabled, normal charging"
-      "$BATT" adapter enable >>"$LOG" 2>&1
-      led enable
-      stop_caffeinate
-      echo paused > "$STATE_FILE"
+    BREAK_UNTIL=$(tr -dc '0-9' < "$PAUSE_FILE" 2>/dev/null)
+    if [ -n "$BREAK_UNTIL" ] && [ "$(date +%s)" -ge "$BREAK_UNTIL" ]; then
+      log "benchmark break elapsed - auto-resuming"
+      rm -f "$PAUSE_FILE"          # fall through; the paused->drain block below re-cuts the adapter
+    else
+      if [ "$(cat "$STATE_FILE")" != "paused" ]; then
+        log "PAUSED by user - adapter re-enabled, normal charging"
+        "$BATT" adapter enable >>"$LOG" 2>&1
+        led enable
+        stop_caffeinate
+        echo paused > "$STATE_FILE"
+      fi
+      sleep "$POLL"; continue
     fi
-    sleep "$POLL"; continue
   fi
 
   STATE=$(cat "$STATE_FILE")
