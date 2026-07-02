@@ -176,6 +176,35 @@ export default function App() {
     return { drainH: hrs(drainMs), chargeH: hrs(chargeMs), idleH: hrs(idleMs), dischargeWh: dischargeWh.toFixed(1), minPct, maxPct, minT, maxT, turnarounds };
   }, [dayRows, cycles]);
 
+  // How is BattCal affecting the cycle counter and the health numbers?
+  const impact = useMemo(() => {
+    if (!healthPts.length || !status?.cycles) return null;
+    const first = healthPts[0];
+    const days = Math.max((Date.now() - first.t) / 86400e3, 0.25);
+    const cyclesAdded = status.cycles - first.cycle;
+    const perDay = cyclesAdded / days;
+    const perMonth = perDay * 30;
+    const ratedPctPerMonth = (perMonth / status.designCycles) * 100;
+    const rawStartPct = first.raw;
+    const rawNowPct = status.rawHealthPct;
+    const appleNow = typeof status.appleHealth === 'string' ? Number(String(status.appleHealth).replace('%', '')) : status.appleHealth;
+    return {
+      sinceDays: days.toFixed(1),
+      startCycle: first.cycle,
+      cyclesAdded,
+      perDay: perDay.toFixed(1),
+      perMonth: Math.round(perMonth),
+      ratedPctPerMonth: ratedPctPerMonth.toFixed(1),
+      rawStartPct,
+      rawNowPct,
+      rawDelta: rawStartPct != null && rawNowPct != null ? (rawNowPct - rawStartPct).toFixed(1) : null,
+      appleStart: first.apple,
+      appleNow,
+    };
+  }, [healthPts, status]);
+
+  const cycleScale = useMemo(() => steppedScale(healthPts.map((h) => h.cycle).concat(status?.cycles ? [status.cycles] : []), 1), [healthPts, status?.cycles]);
+
   // Time to band edge at CURRENT draw (gauge math, like the OS's estimate).
   const eta = useMemo(() => {
     const s = status;
@@ -337,6 +366,40 @@ export default function App() {
               <Line type="monotone" dataKey="apple" name="Apple smoothed" stroke="var(--series-3)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="grid2">
+        <div className="card">
+          <h2>Battery cycle count</h2>
+          <p className="hint">the gauge's odometer; one cycle = 100% worth of discharge (a 10-90 pass adds 0.8)</p>
+          <ResponsiveContainer width="100%" height={170}>
+            <LineChart data={healthPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
+              <CartesianGrid stroke="var(--grid)" vertical={false} />
+              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={healthTicks} tickFormatter={(t) => fmtTimeTick(t, healthPts.length > 1 ? healthPts[healthPts.length - 1].t - healthPts[0].t : 3600e3)} {...axis} />
+              <YAxis domain={cycleScale.domain} ticks={cycleScale.ticks} allowDecimals={false} {...axis} />
+              <Tooltip content={<ChartTooltip unit="" />} />
+              <Line type="stepAfter" dataKey="cycle" name="cycle count" stroke="var(--series-1)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="card">
+          <h2>Impact since BattCal started</h2>
+          <p className="hint">what this method is costing in cycles, and doing to the health numbers</p>
+          {impact ? (
+            <div className="story">
+              <div><b>+{impact.cyclesAdded}</b><span>cycles in {impact.sinceDays}d ({impact.perDay}/day)</span></div>
+              <div><b>~{impact.perMonth}/mo</b><span>{impact.ratedPctPerMonth}% of rated {status?.designCycles ?? 1000}-cycle life</span></div>
+              <div><b>{impact.rawStartPct ?? '--'}% → {impact.rawNowPct ?? '--'}%</b><span>true health ({impact.rawDelta != null && Number(impact.rawDelta) >= 0 ? '+' : ''}{impact.rawDelta ?? '--'} pp)</span></div>
+              <div><b>{impact.appleStart ?? '--'}% → {impact.appleNow ?? '--'}%</b><span>Apple smoothed</span></div>
+            </div>
+          ) : (
+            <p className="hint">Needs at least one completed cycle snapshot.</p>
+          )}
+          <p className="hint">Wear math: band cycling spends cycle count like normal usage does; the tradeoff is
+            avoiding time parked at 100%, which is the bigger aging factor for lithium cells. Health estimates
+            move as the gauge re-learns; expect wobble, judge by the multi-day trend.</p>
         </div>
       </div>
 

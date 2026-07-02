@@ -19,6 +19,7 @@ export interface Status {
   rawHealthPct: number | null;
   nominalHealthPct: number | null;
   cycles: number | null;
+  designCycles: number;
   appleHealth: string | number | null;
   updatedAt: string;
 }

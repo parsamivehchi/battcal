@@ -103,6 +103,7 @@ function status() {
     rawHealthPct: rawMax && design ? +(100 * rawMax / design).toFixed(1) : null,
     nominalHealthPct: nominal && design ? +(100 * nominal / design).toFixed(1) : null,
     cycles: cycleMatch ? Number(cycleMatch[1]) : null,
+    designCycles: num(ior, 'DesignCycleCount9C') || 1000,
     appleHealth: lastCycle ? lastCycle.apple_health : null,
     updatedAt: new Date().toISOString(),
   };
