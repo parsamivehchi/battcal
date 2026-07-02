@@ -27,6 +27,9 @@ struct EngineStatus: Codable {
     var plugged: Bool
     var adapterW: Int
     var batteryW: Double?
+    var amperageMa: Double?
+    var rawCurrentMah: Double?
+    var rawMah: Double?
     var tempC: Double?
     var rawHealthPct: Double?
     var appleHealth: String?
@@ -56,6 +59,7 @@ final class BattCalModel: ObservableObject {
     @Published var spark: [TelemetryPoint] = []
     @Published var engineLoaded = true
     @Published var reachable = true
+    private var ampHistory: [Double] = []
 
     private let base = URL(string: "http://localhost:4437")!
     private var timer: Timer?
@@ -75,6 +79,10 @@ final class BattCalModel: ObservableObject {
                 let (d, _) = try await URLSession.shared.data(from: base.appendingPathComponent("api/status"))
                 status = try JSONDecoder().decode(EngineStatus.self, from: d)
                 reachable = true
+                if let a = status?.amperageMa {
+                    ampHistory.append(a)
+                    if ampHistory.count > 5 { ampHistory.removeFirst(ampHistory.count - 5) }
+                }
             } catch {
                 reachable = false
             }
@@ -154,19 +162,25 @@ final class BattCalModel: ObservableObject {
         return "\(pct)%"
     }
 
-    // Estimated minutes until the battery reaches the active band edge,
-    // from the last ~15 minutes of telemetry slope. nil = not estimable.
+    // Estimated minutes until the battery reaches the active band edge.
+    // Gauge math (like the OS): remaining mAh to target / current draw, where
+    // the draw is a short median so a momentary spike does not whipsaw the ETA.
     var minutesToTarget: (mins: Int, target: Int)? {
-        guard reachable, engineLoaded, let s = status, let pct = s.pct, !s.paused else { return nil }
-        let target = s.state == "drain" ? s.band.low : s.band.high
-        let recent = spark.suffix(30)
-        guard recent.count >= 4, let first = recent.first, let last = recent.last else { return nil }
-        let dtMin = last.date.timeIntervalSince(first.date) / 60
-        let dPct = last.pct - first.pct
-        guard dtMin > 2, abs(dPct) > 0.2 else { return nil }
-        let rate = dPct / dtMin
-        let mins = (Double(target) - Double(pct)) / rate
-        guard mins > 0, mins < 48 * 60 else { return nil }
+        guard reachable, engineLoaded, let s = status, !s.paused,
+              let cur = s.rawCurrentMah, let max = s.rawMah, max > 0 else { return nil }
+        let amps = ampHistory.sorted()
+        guard !amps.isEmpty else { return nil }
+        let amp = amps[amps.count / 2]
+        guard abs(amp) > 50 else { return nil }
+        let target: Int
+        switch s.state {
+        case "drain": target = s.band.low
+        case "charge": target = s.band.high
+        default: return nil
+        }
+        let targetMah = Double(target) / 100 * max
+        let mins = (targetMah - cur) / amp * 60
+        guard mins.isFinite, mins > 0, mins < 48 * 60 else { return nil }
         return (Int(mins), target)
     }
 

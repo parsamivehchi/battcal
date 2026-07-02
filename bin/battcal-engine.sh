@@ -29,6 +29,7 @@ STATE_FILE=/var/tmp/battcal.state
 PAUSE_FILE=/var/tmp/battcal.pause
 MODE_FILE=/var/tmp/battcal.mode
 HOLD_FILE=/var/tmp/battcal.holdstart
+CYCLE_FILE=/var/tmp/battcal.cyclestart
 CAFF_PID_FILE=/var/tmp/battcal.caffeinate.pid
 LOG="$HOME/Library/Logs/battcal.log"
 CSV="$HOME/Library/Logs/battcal-history.csv"
@@ -99,19 +100,29 @@ log_telemetry() {
 }
 
 snapshot_csv() {
-  local ior raw nom cyc apple
+  local ior raw nom cyc apple cs dur
   ior=$(ioreg -rn AppleSmartBattery)
   raw=$(echo "$ior" | sed -n 's/^ *"AppleRawMaxCapacity" = \([0-9]*\)$/\1/p')
   nom=$(echo "$ior" | sed -n 's/^ *"NominalChargeCapacity" = \([0-9]*\)$/\1/p')
   cyc=$(echo "$ior" | sed -n 's/^ *"CycleCount" = \([0-9]*\)$/\1/p')
   apple=$(system_profiler SPPowerDataType 2>/dev/null | sed -n 's/.*Maximum Capacity: //p')
-  [ -f "$CSV" ] || echo "date,cycle_count,raw_mAh,nominal_mAh,apple_health" > "$CSV"
-  echo "$(date '+%Y-%m-%d %H:%M'),$cyc,$raw,$nom,$apple" >> "$CSV"
+  cs=$(cat "$CYCLE_FILE" 2>/dev/null || echo 0)
+  dur=""
+  [ "$cs" -gt 0 ] 2>/dev/null && dur=$(( ($(date +%s) - cs) / 60 ))
+  [ -f "$CSV" ] || echo "date,cycle_count,raw_mAh,nominal_mAh,apple_health,mode,band_low,band_high,duration_min" > "$CSV"
+  echo "$(date '+%Y-%m-%d %H:%M'),$cyc,$raw,$nom,$apple,$MODE,$LOW,$HIGH,$dur" >> "$CSV"
 }
+
+begin_cycle() { date +%s > "$CYCLE_FILE"; }
 
 trap 'stop_caffeinate' EXIT TERM INT
 
-[ -f "$STATE_FILE" ] || echo drain > "$STATE_FILE"
+# v2.1: history CSV gained mode/band/duration columns; park legacy files aside.
+if [ -f "$CSV" ] && ! head -1 "$CSV" | grep -q ',mode,'; then
+  mv "$CSV" "${CSV%.csv}-v1.csv"
+fi
+
+[ -f "$STATE_FILE" ] || { echo drain > "$STATE_FILE"; date +%s > "$CYCLE_FILE"; }
 STATE=$(cat "$STATE_FILE")
 LAST_MODE=$(mode)
 log "=== battcal engine started (state=$STATE, mode=$LAST_MODE, battery $(pct)%) ==="
@@ -141,6 +152,7 @@ while true; do
   STATE=$(cat "$STATE_FILE")
   if [ "$STATE" = "paused" ]; then
     log "RESUMED - entering drain"
+    begin_cycle
     echo drain > "$STATE_FILE"; STATE=drain
     "$BATT" adapter disable >>"$LOG" 2>&1
   fi
@@ -153,6 +165,7 @@ while true; do
     if [ "$MODE" = "longevity" ] && [ "$STATE" = "hold" ]; then
       log "longevity mode does not hold at full - switching to DRAIN"
       "$BATT" adapter disable >>"$LOG" 2>&1
+      begin_cycle
       echo drain > "$STATE_FILE"; STATE=drain
     fi
   fi
@@ -200,6 +213,7 @@ while true; do
           snapshot_csv
           log "reached ${P}% - longevity turnaround (never charging to 100%), switching to DRAIN"
           "$BATT" adapter disable >>"$LOG" 2>&1
+          begin_cycle
           echo drain > "$STATE_FILE"
         fi
       else
@@ -216,6 +230,7 @@ while true; do
         snapshot_csv
         log "longevity mode does not hold at full - switching to DRAIN"
         "$BATT" adapter disable >>"$LOG" 2>&1
+        begin_cycle
         echo drain > "$STATE_FILE"
         sleep "$POLL"; continue
       fi
@@ -224,6 +239,7 @@ while true; do
         snapshot_csv
         log "hold complete - snapshot logged, switching to DRAIN"
         "$BATT" adapter disable >>"$LOG" 2>&1
+        begin_cycle
         echo drain > "$STATE_FILE"
       fi
       ;;

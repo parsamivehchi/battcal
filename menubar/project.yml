@@ -17,6 +17,7 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_NSHumanReadableCopyright: "MIT - Parsa Mivehchi"
         SWIFT_VERSION: "5.10"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
         ENABLE_HARDENED_RUNTIME: NO

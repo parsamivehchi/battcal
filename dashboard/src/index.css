@@ -121,7 +121,21 @@ table.data td:first-child { color: var(--text-primary); }
 table.data tr:last-child td { border-bottom: none; }
 
 .loglines { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text-secondary); max-height: 300px; overflow-y: auto; padding-bottom: 8px; }
-.loglines div { padding: 2px 0; border-bottom: 1px dashed var(--grid); white-space: pre-wrap; }
+.loglines div { padding: 2px 0 2px 10px; border-bottom: 1px dashed var(--grid); white-space: pre-wrap; border-left: 3px solid transparent; }
+.loglines .ev-drain { border-left-color: var(--status-serious); }
+.loglines .ev-charge { border-left-color: var(--status-good); }
+.loglines .ev-ctl { border-left-color: var(--series-1); }
+
+.story {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px; padding-bottom: 10px;
+}
+.story > div {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.story b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.story span { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .tooltip {
   background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;

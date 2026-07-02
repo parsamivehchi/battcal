@@ -92,7 +92,7 @@ struct PopoverView: View {
                 Text("Engine is off: your Mac charges to 100% like a normal Mac.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            actionButton("chart.xyaxis.line", "Open dashboard") { model.openDashboard() }
+            actionButton("chart.xyaxis.line", "Open dashboard", .prominent) { model.openDashboard() }
 
             Divider()
 
@@ -132,7 +132,7 @@ struct PopoverView: View {
         parts.append(s?.plugged == true ? "Plugged in · \(s?.adapterW ?? 0) W adapter" : "On battery")
         if let (mins, target) = model.minutesToTarget {
             let t = mins >= 60 ? "\(mins / 60)h \(mins % 60)m" : "\(mins)m"
-            parts.append("~\(t) until \(target)%")
+            parts.append("~\(t) until \(target)% at current draw")
         }
         return parts.joined(separator: " · ")
     }

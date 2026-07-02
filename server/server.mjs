@@ -94,6 +94,8 @@ function status() {
     plugged: adapter !== null && Number(adapter[1]) > 0,
     adapterW: adapter ? Number(adapter[1]) : 0,
     batteryW: voltage !== null && amperage !== null ? +(voltage * amperage / 1e6).toFixed(1) : null,
+    amperageMa: amperage,
+    rawCurrentMah: num(ior, 'AppleRawCurrentCapacity'),
     tempC: temp !== null ? +(temp / 100).toFixed(1) : null,
     rawMah: rawMax,
     nominalMah: nominal,

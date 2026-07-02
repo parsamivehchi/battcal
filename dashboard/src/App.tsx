@@ -7,6 +7,7 @@ import {
   CycleRow, Mode, Status, TelemetryRow,
   fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postMode, postPause, postResume,
 } from './api';
+import { fmtTimeTick, niceTimeTicks, powerStep, steppedScale } from './chartUtils';
 
 const RANGES = [
   { label: '3h', hours: 3 },
@@ -33,13 +34,14 @@ function stateMeta(s: Status | null) {
   return map[s?.state || 'stopped'] || map.stopped;
 }
 
-const fmtTime = (t: number, spanH: number) => {
-  const d = new Date(t);
-  if (spanH > 48) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-};
-
 interface Pt { t: number; pct: number; w: number; temp: number; state: string }
+
+const eventClass = (line: string): string => {
+  if (/DRAIN|drain/.test(line)) return 'ev-drain';
+  if (/CHARGE|charged|charge/.test(line)) return 'ev-charge';
+  if (/PAUSED|RESUMED|mode|started/.test(line)) return 'ev-ctl';
+  return '';
+};
 
 function ChartTooltip({ active, payload, label, unit }:
   { active?: boolean; payload?: { value: number; name: string; color?: string }[]; label?: number; unit: string }) {
@@ -78,6 +80,7 @@ const HOW_ROWS: Array<{ key: string; title: string; body: string }> = [
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [rows, setRows] = useState<TelemetryRow[]>([]);
+  const [dayRows, setDayRows] = useState<TelemetryRow[]>([]);
   const [cycles, setCycles] = useState<CycleRow[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [hours, setHours] = useState(12);
@@ -110,8 +113,8 @@ export default function App() {
   }, []);
   const refreshData = useCallback(async (h: number) => {
     try {
-      const [t, c, l] = await Promise.all([fetchTelemetry(h), fetchCycles(), fetchLog()]);
-      setRows(t); setCycles(c); setLog(l); setErr(null);
+      const [t, d, c, l] = await Promise.all([fetchTelemetry(h), fetchTelemetry(24), fetchCycles(), fetchLog()]);
+      setRows(t); setDayRows(d); setCycles(c); setLog(l); setErr(null);
     } catch (e) { setErr(String(e)); }
   }, []);
 
@@ -127,21 +130,64 @@ export default function App() {
     t: new Date(r.ts).getTime(), pct: r.pct, w: r.battery_W, temp: r.temp_C, state: r.state,
   })).filter((p) => Number.isFinite(p.t)), [rows]);
 
-  const spanH = useMemo(() => (pts.length > 1 ? (pts[pts.length - 1].t - pts[0].t) / 3600e3 : 1), [pts]);
+  const spanMs = useMemo(() => (pts.length > 1 ? pts[pts.length - 1].t - pts[0].t : 3600e3), [pts]);
+  const timeTicks = useMemo(() => (pts.length > 1 ? niceTimeTicks(pts[0].t, pts[pts.length - 1].t) : []), [pts]);
+  const tempScale = useMemo(() => steppedScale(pts.map((p) => p.temp), 0.5), [pts]);
+  const powScale = useMemo(() => steppedScale(pts.map((p) => p.w), powerStep(pts.map((p) => p.w)), { includeZero: true }), [pts]);
 
   const powerOffset = useMemo(() => {
-    if (!pts.length) return 0.5;
-    const max = Math.max(...pts.map((p) => p.w), 0);
-    const min = Math.min(...pts.map((p) => p.w), 0);
-    return max === min ? 0.5 : max / (max - min);
-  }, [pts]);
+    const [lo, hi] = powScale.domain;
+    return hi === lo ? 0.5 : hi / (hi - lo);
+  }, [powScale]);
 
   const healthPts = useMemo(() => cycles.map((c) => ({
+    t: new Date(String(c.date).replace(' ', 'T') + ':00').getTime(),
     cycle: c.cycle_count,
+    mode: c.mode ?? '-',
     raw: status?.designMah ? +(100 * c.raw_mAh / status.designMah).toFixed(1) : null,
     nominal: status?.designMah ? +(100 * c.nominal_mAh / status.designMah).toFixed(1) : null,
     apple: typeof c.apple_health === 'string' ? Number(String(c.apple_health).replace('%', '')) : c.apple_health,
-  })), [cycles, status?.designMah]);
+  })).filter((h) => Number.isFinite(h.t)), [cycles, status?.designMah]);
+
+  const healthTicks = useMemo(() => (healthPts.length > 1 ? niceTimeTicks(healthPts[0].t, healthPts[healthPts.length - 1].t) : []), [healthPts]);
+  const healthScale = useMemo(() => steppedScale(
+    healthPts.flatMap((h) => [h.raw, h.nominal, h.apple]).filter((v): v is number => v != null).concat([80]),
+    2, { clampMin: 70, clampMax: 100 },
+  ), [healthPts]);
+
+  // "Last 24h story": dt-weighted aggregates from full-day telemetry.
+  const story = useMemo(() => {
+    if (dayRows.length < 2) return null;
+    let drainMs = 0, chargeMs = 0, idleMs = 0, dischargeWh = 0;
+    let minPct = Infinity, maxPct = -Infinity, minT = Infinity, maxT = -Infinity;
+    for (let i = 1; i < dayRows.length; i++) {
+      const a = dayRows[i - 1], b = dayRows[i];
+      const dt = Math.min(new Date(b.ts).getTime() - new Date(a.ts).getTime(), 5 * 60e3);
+      if (dt <= 0) continue;
+      if (a.state === 'drain') drainMs += dt;
+      else if (a.state === 'charge' || a.state === 'hold') chargeMs += dt;
+      else idleMs += dt;
+      if (a.battery_W < 0) dischargeWh += (Math.abs(a.battery_W) * dt) / 3600e3;
+      minPct = Math.min(minPct, a.pct); maxPct = Math.max(maxPct, a.pct);
+      minT = Math.min(minT, a.temp_C); maxT = Math.max(maxT, a.temp_C);
+    }
+    const turnarounds = cycles.filter((c) => Date.now() - new Date(String(c.date).replace(' ', 'T') + ':00').getTime() < 24 * 3600e3).length;
+    const hrs = (ms: number) => (ms / 3600e3).toFixed(1);
+    return { drainH: hrs(drainMs), chargeH: hrs(chargeMs), idleH: hrs(idleMs), dischargeWh: dischargeWh.toFixed(1), minPct, maxPct, minT, maxT, turnarounds };
+  }, [dayRows, cycles]);
+
+  // Time to band edge at CURRENT draw (gauge math, like the OS's estimate).
+  const eta = useMemo(() => {
+    const s = status;
+    if (!s || s.paused || !s.rawCurrentMah || !s.rawMah || !s.amperageMa || Math.abs(s.amperageMa) < 50) return null;
+    const targetPct = s.state === 'drain' ? s.band.low : s.state === 'charge' ? s.band.high : null;
+    if (targetPct === null) return null;
+    const targetMah = (targetPct / 100) * s.rawMah;
+    const mins = ((targetMah - s.rawCurrentMah) / s.amperageMa) * 60;
+    if (!Number.isFinite(mins) || mins <= 0 || mins > 48 * 60) return null;
+    const m = Math.round(mins);
+    return { text: m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`, targetPct };
+  }, [status]);
 
   const lastHealth = healthPts.at(-1);
   const meta = stateMeta(status);
@@ -158,6 +204,7 @@ export default function App() {
           <span className="dot" style={{ background: meta.color }} />
           {meta.icon} {meta.label}
         </span>
+        {eta && <span className="pill" title="At current draw, from the battery gauge">~{eta.text} to {eta.targetPct}%</span>}
         <div className="spacer" />
         {status?.paused
           ? <button className="action primary" onClick={async () => { await postResume(); refreshStatus(); }}>Resume cycling</button>
@@ -220,8 +267,8 @@ export default function App() {
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
-              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(t) => fmtTime(t, spanH)} {...axis} />
-              <YAxis domain={[0, 100]} {...axis} />
+              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={timeTicks} tickFormatter={(t) => fmtTimeTick(t, spanMs)} {...axis} />
+              <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} {...axis} />
               <Tooltip content={<ChartTooltip unit="%" />} />
               <ReferenceArea y1={band.low} y2={band.high} fill="var(--accent-wash)" stroke="none" />
               <ReferenceLine y={band.low} stroke="var(--text-muted)" strokeDasharray="4 4" />
@@ -247,8 +294,8 @@ export default function App() {
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
-              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(t) => fmtTime(t, spanH)} {...axis} />
-              <YAxis {...axis} />
+              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={timeTicks} tickFormatter={(t) => fmtTimeTick(t, spanMs)} {...axis} />
+              <YAxis domain={powScale.domain} ticks={powScale.ticks} tickFormatter={(v) => `${v}`} {...axis} />
               <Tooltip content={<ChartTooltip unit=" W" />} />
               <ReferenceLine y={0} stroke="var(--baseline)" />
               <Area type="monotone" dataKey="w" name="power" stroke="url(#wStroke)" strokeWidth={2.5} fill="url(#wFill)" dot={false} isAnimationActive={false} />
@@ -262,8 +309,8 @@ export default function App() {
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={pts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
-              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(t) => fmtTime(t, spanH)} {...axis} />
-              <YAxis domain={['auto', 'auto']} {...axis} />
+              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={timeTicks} tickFormatter={(t) => fmtTimeTick(t, spanMs)} {...axis} />
+              <YAxis domain={tempScale.domain} ticks={tempScale.ticks} tickFormatter={(v) => v.toFixed(1)} {...axis} />
               <Tooltip content={<ChartTooltip unit=" C" />} />
               <Line type="monotone" dataKey="temp" name="temp" stroke="var(--series-2)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
             </LineChart>
@@ -281,8 +328,8 @@ export default function App() {
           <ResponsiveContainer width="100%" height={186}>
             <LineChart data={healthPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
-              <XAxis dataKey="cycle" type="number" domain={['dataMin', 'dataMax']} {...axis} allowDecimals={false} />
-              <YAxis domain={[70, 100]} {...axis} />
+              <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={healthTicks} tickFormatter={(t) => fmtTimeTick(t, healthPts.length > 1 ? healthPts[healthPts.length - 1].t - healthPts[0].t : 3600e3)} {...axis} />
+              <YAxis domain={healthScale.domain} ticks={healthScale.ticks} {...axis} />
               <Tooltip content={<ChartTooltip unit="%" />} />
               <ReferenceLine y={80} stroke="var(--status-critical)" strokeDasharray="4 4" />
               <Line type="monotone" dataKey="raw" name="gauge raw" stroke="var(--series-1)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
@@ -292,6 +339,22 @@ export default function App() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {story && (
+        <div className="card">
+          <h2>Last 24 hours</h2>
+          <p className="hint">how the cycling went while you were away</p>
+          <div className="story">
+            <div><b>{story.turnarounds}</b><span>band cycles</span></div>
+            <div><b>{story.drainH}h</b><span>draining</span></div>
+            <div><b>{story.chargeH}h</b><span>charging</span></div>
+            <div><b>{story.idleH}h</b><span>paused / idle</span></div>
+            <div><b>{story.dischargeWh} Wh</b><span>energy discharged</span></div>
+            <div><b>{story.minPct}-{story.maxPct}%</b><span>battery range</span></div>
+            <div><b>{story.minT}-{story.maxT}°C</b><span>temp range</span></div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <button className="how-toggle" onClick={() => setShowHow((s) => !s)} aria-expanded={showHow}>
@@ -317,21 +380,27 @@ export default function App() {
           <h2>Cycle history</h2>
           <p className="hint">one row per completed cycle (longevity turnaround or calibration hold)</p>
           <table className="data">
-            <thead><tr><th>Completed</th><th>Cycle</th><th>Raw mAh</th><th>Nominal mAh</th><th>Apple</th></tr></thead>
+            <thead><tr><th>Completed</th><th>Mode</th><th>Band</th><th>Duration</th><th>Raw mAh</th><th>Nominal</th><th>Apple</th></tr></thead>
             <tbody>
               {[...cycles].reverse().map((c, i) => (
-                <tr key={i}><td>{c.date}</td><td>{c.cycle_count}</td><td>{c.raw_mAh}</td><td>{c.nominal_mAh}</td><td>{String(c.apple_health)}</td></tr>
+                <tr key={i}>
+                  <td>{c.date}</td>
+                  <td>{c.mode ?? '-'}</td>
+                  <td>{c.band_low != null ? `${c.band_low}-${c.band_high}%` : '-'}</td>
+                  <td>{typeof c.duration_min === 'number' ? `${Math.floor(c.duration_min / 60)}h${String(c.duration_min % 60).padStart(2, '0')}` : '-'}</td>
+                  <td>{c.raw_mAh}</td><td>{c.nominal_mAh}</td><td>{String(c.apple_health)}</td>
+                </tr>
               ))}
-              {!cycles.length && <tr><td colSpan={5}>No completed cycles yet</td></tr>}
+              {!cycles.length && <tr><td colSpan={7}>No completed cycles yet</td></tr>}
             </tbody>
           </table>
         </div>
 
         <div className="card">
           <h2>Engine events</h2>
-          <p className="hint">phase transitions and controls, newest last</p>
+          <p className="hint">phase transitions and controls, newest first</p>
           <div className="loglines">
-            {log.map((l, i) => <div key={i}>{l}</div>)}
+            {[...log].reverse().map((l, i) => <div key={i} className={eventClass(l)}>{l}</div>)}
             {!log.length && <div>No events logged yet</div>}
           </div>
         </div>

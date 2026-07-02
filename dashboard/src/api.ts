@@ -10,6 +10,8 @@ export interface Status {
   plugged: boolean;
   adapterW: number;
   batteryW: number | null;
+  amperageMa: number | null;
+  rawCurrentMah: number | null;
   tempC: number | null;
   rawMah: number | null;
   nominalMah: number | null;
@@ -41,6 +43,10 @@ export interface CycleRow {
   raw_mAh: number;
   nominal_mAh: number;
   apple_health: string | number;
+  mode?: string;
+  band_low?: number;
+  band_high?: number;
+  duration_min?: number | string;
 }
 
 async function get<T>(path: string): Promise<T> {
