@@ -61,6 +61,28 @@ stop_caffeinate() {
   fi
 }
 
+TELEMETRY="$HOME/Library/Logs/battcal-telemetry.csv"
+
+# One detailed row per poll: what the battery is doing right now.
+log_telemetry() {
+  local ior state chg pct rawcur rawmax mv ma temp aw watts
+  ior=$(ioreg -rn AppleSmartBattery)
+  state=$1; pct=$2
+  chg=no; pmset -g batt | grep -q '; charging;' && chg=yes
+  rawcur=$(echo "$ior" | sed -n 's/^ *"AppleRawCurrentCapacity" = \([0-9]*\)$/\1/p')
+  rawmax=$(echo "$ior" | sed -n 's/^ *"AppleRawMaxCapacity" = \([0-9]*\)$/\1/p')
+  mv=$(echo "$ior" | sed -n 's/^ *"Voltage" = \([0-9]*\)$/\1/p')
+  ma=$(echo "$ior" | sed -n 's/^ *"Amperage" = \([0-9]*\)$/\1/p')
+  # Amperage is unsigned 64-bit in ioreg; discharge shows as 2^64-x. Convert to signed.
+  ma=$(awk "BEGIN{v=$ma+0; if (v>9e18) v-=18446744073709551616; printf \"%d\", v}")
+  temp=$(echo "$ior" | sed -n 's/^ *"Temperature" = \([0-9]*\)$/\1/p')
+  temp=$(awk "BEGIN{printf \"%.1f\", ${temp:-0}/100}")
+  aw=$(echo "$ior" | grep '"AdapterDetails"' | sed -n 's/.*"Watts"=\([0-9]*\).*/\1/p'); aw=${aw:-0}
+  watts=$(awk "BEGIN{printf \"%.1f\", ${mv:-0}*${ma:-0}/1000000}")
+  [ -f "$TELEMETRY" ] || echo "ts,state,pct,charging,raw_current_mAh,raw_max_mAh,voltage_mV,amperage_mA,battery_W,adapter_W,temp_C" > "$TELEMETRY"
+  echo "$(date '+%Y-%m-%dT%H:%M:%S'),$state,$pct,$chg,$rawcur,$rawmax,$mv,$ma,$watts,$aw,$temp" >> "$TELEMETRY"
+}
+
 snapshot_csv() {
   local ior raw nom cyc apple
   ior=$(ioreg -rn AppleSmartBattery)
@@ -109,6 +131,8 @@ while true; do
 
   P=$(pct)
   if [ -z "$P" ]; then sleep "$POLL"; continue; fi
+
+  log_telemetry "$STATE" "$P"
 
   case "$STATE" in
     drain)
