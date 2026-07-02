@@ -94,35 +94,38 @@ struct PopoverView: View {
 
             Divider()
 
-            HStack(spacing: 6) {
-                Text("Menu bar shows").font(.caption).foregroundStyle(.secondary)
-                Picker("", selection: $labelStyleRaw) {
-                    ForEach(LabelStyle.allCases) { Text($0.title).tag($0.rawValue) }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .font(.caption)
-            }
-
-            HStack {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-                    .onChange(of: launchAtLogin) { _, on in
-                        do {
-                            if on { try SMAppService.mainApp.register() }
-                            else { try SMAppService.mainApp.unregister() }
-                        } catch {
-                            launchAtLogin = SMAppService.mainApp.status == .enabled
-                        }
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("Menu bar shows").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $labelStyleRaw) {
+                        ForEach(LabelStyle.allCases) { Text($0.title).tag($0.rawValue) }
                     }
-                Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
                     .font(.caption)
+                    Spacer()
+                }
+                HStack {
+                    Toggle("Launch at login", isOn: $launchAtLogin)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                        .onChange(of: launchAtLogin) { _, on in
+                            do {
+                                if on { try SMAppService.mainApp.register() }
+                                else { try SMAppService.mainApp.unregister() }
+                            } catch {
+                                launchAtLogin = SMAppService.mainApp.status == .enabled
+                            }
+                        }
+                    Spacer()
+                    Button("Quit") { NSApp.terminate(nil) }
+                        .font(.caption)
+                }
             }
         }
         .padding(14)
         .frame(width: 340)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var subline: String {

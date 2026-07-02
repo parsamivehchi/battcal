@@ -1,25 +1,66 @@
 import SwiftUI
+import AppKit
+import Combine
 
 @main
 struct BattCalBarApp: App {
-    @StateObject private var model = BattCalModel()
-    @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.eta.rawValue
-
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     var body: some Scene {
-        MenuBarExtra {
-            PopoverView(model: model)
-        } label: {
-            let style = LabelStyle(rawValue: labelStyleRaw) ?? .eta
-            // No battery glyph for text styles: macOS already shows the battery
-            // icon, so BattCal's item is just its own text ("9m→90%").
-            if let text = model.menuLabel(for: style) {
-                Text(text)
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-            } else {
-                Image(systemName: model.symbolName)
-            }
+        // Menu-bar-only app (LSUIElement); no window. The status item + popover
+        // live in the AppDelegate so the popover anchors precisely under the item.
+        Settings { EmptyView() }
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let model = BattCalModel()
+    private var statusItem: NSStatusItem!
+    private let popover = NSPopover()
+    private var cancellables = Set<AnyCancellable>()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            button.imagePosition = .imageLeading
+            button.target = self
+            button.action = #selector(togglePopover)
         }
-        .menuBarExtraStyle(.window)
+
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
+
+        // Keep the menu bar title in sync with the live model + chosen label style.
+        model.$status.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
+        model.$reachable.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
+        updateButton()
+    }
+
+    private func updateButton() {
+        guard let button = statusItem.button else { return }
+        let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.eta.rawValue
+        let style = LabelStyle(rawValue: raw) ?? .eta
+        if let text = model.menuLabel(for: style) {
+            button.image = nil
+            button.title = text
+        } else {
+            button.title = ""
+            button.image = NSImage(systemSymbolName: model.symbolName, accessibilityDescription: "BattCal")
+        }
+    }
+
+    @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
     }
 }
