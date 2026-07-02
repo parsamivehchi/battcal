@@ -115,6 +115,37 @@ final class BattCalModel: ObservableObject {
         }
     }
 
+    // The three states the user picks between. Off only appears if the engine
+    // agent was manually stopped; selecting any state brings it back.
+    enum ActiveMode: String { case longevity, calibration, normal, off }
+
+    var activeMode: ActiveMode {
+        guard reachable, engineLoaded else { return .off }
+        if status?.paused == true { return .normal }
+        return status?.mode == "calibration" ? .calibration : .longevity
+    }
+
+    func select(_ target: ActiveMode) {
+        Task {
+            if !engineLoaded, target != .off {
+                _ = Self.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", agentPlist])
+            }
+            switch target {
+            case .longevity, .calibration:
+                var r = URLRequest(url: base.appendingPathComponent("api/resume")); r.httpMethod = "POST"
+                _ = try? await URLSession.shared.data(for: r)
+                var m = URLRequest(url: URL(string: "api/mode?mode=\(target.rawValue)", relativeTo: base)!); m.httpMethod = "POST"
+                _ = try? await URLSession.shared.data(for: m)
+            case .normal:
+                var p = URLRequest(url: base.appendingPathComponent("api/pause")); p.httpMethod = "POST"
+                _ = try? await URLSession.shared.data(for: p)
+            case .off:
+                break
+            }
+            refresh()
+        }
+    }
+
     func openDashboard() {
         NSWorkspace.shared.open(URL(string: "https://battcal.localhost")!)
     }
@@ -190,26 +221,30 @@ final class BattCalModel: ObservableObject {
         return "\(t)→\(target)%"
     }
 
-    func labelText(for style: LabelStyle) -> String? {
-        guard reachable, let s = status else { return style == .iconOnly ? nil : "--" }
-        switch style {
-        case .iconOnly: return nil
-        case .percent: return titleText
-        case .eta: return etaText ?? titleText
-        case .power:
-            guard let w = s.batteryW else { return titleText }
-            return String(format: "%+.1fW", w)
-        case .health:
-            guard let h = s.rawHealthPct else { return titleText }
-            return String(format: "%.1f%%", h)
+    // Menu bar text (no glyph unless the style is iconOnly). When not cycling
+    // we show the mode word, not a redundant % (Apple's own icon shows that).
+    func menuLabel(for style: LabelStyle) -> String? {
+        if style == .iconOnly { return nil }
+        guard reachable else { return "—" }
+        switch activeMode {
+        case .off: return "off"
+        case .normal: return "normal"
+        case .longevity, .calibration:
+            switch style {
+            case .iconOnly: return nil
+            case .percent: return titleText
+            case .eta: return etaText ?? titleText
+            case .power: return status?.batteryW.map { String(format: "%+.1fW", $0) } ?? titleText
+            case .health: return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
+            }
         }
     }
 
     var stateLine: String {
         guard reachable else { return "BattCal server offline" }
         guard let s = status else { return "Reading battery…" }
-        if !engineLoaded { return "Engine off - charging like normal" }
-        if s.paused { return "Paused - charging like normal" }
+        if !engineLoaded { return "Off \u{2013} charging like normal" }
+        if s.paused { return "Normal charging (Apple default)" }
         switch s.state {
         case "drain": return "Draining to \(s.band.low)%"
         case "charge": return "Charging to \(s.band.high)%"

@@ -52,17 +52,16 @@ struct PopoverView: View {
                 .frame(height: 56)
             }
 
-            // Mode picker
-            Picker("Mode", selection: Binding(
-                get: { s?.mode ?? "longevity" },
-                set: { model.setMode($0) }
-            )) {
-                Text("Longevity 10-90").tag("longevity")
-                Text("Calibration 5-100").tag("calibration")
+            // Mode selector: three clear, obviously-active rows
+            Text("MODE").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).padding(.top, 2)
+            VStack(spacing: 6) {
+                modeRow(.longevity, "arrow.triangle.2.circlepath", "Longevity", "Cycle 10-90%, never sits at full", .green)
+                modeRow(.calibration, "gauge.with.needle", "Calibration", "Full 5-100% passes, re-learns health", .orange)
+                modeRow(.normal, "bolt.fill", "Normal charging", "Apple's default \u{2013} charges to 100%", .blue)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .disabled(!model.reachable || !model.engineLoaded)
+            if !model.reachable {
+                Text("BattCal server offline \u{2013} controls disabled").font(.caption).foregroundStyle(.secondary)
+            }
 
             // Stats grid
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
@@ -79,20 +78,19 @@ struct PopoverView: View {
 
             Divider()
 
-            // Primary actions
-            if model.engineLoaded {
-                if s?.paused == true {
-                    actionButton("play.fill", "Resume cycling", .prominent) { model.resume() }
-                } else {
-                    actionButton("bolt.fill", "Charge full now (pause cycling)", .prominent) { model.pause() }
+            Button { model.openDashboard() } label: {
+                HStack {
+                    Image(systemName: "chart.xyaxis.line").frame(width: 16)
+                    Text("Open dashboard").fontWeight(.semibold)
+                    Spacer()
+                    Image(systemName: "arrow.up.forward").font(.caption)
                 }
-                actionButton("power", "Turn cycling off (charge like normal)") { model.turnEngineOff() }
-            } else {
-                actionButton("play.circle.fill", "Turn cycling on", .prominent) { model.turnEngineOn() }
-                Text("Engine is off: your Mac charges to 100% like a normal Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
-            actionButton("chart.xyaxis.line", "Open dashboard", .prominent) { model.openDashboard() }
+            .buttonStyle(.plain)
+            .padding(.vertical, 7).padding(.horizontal, 10)
+            .background(Color.accentColor.opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(.white)
 
             Divider()
 
@@ -124,7 +122,7 @@ struct PopoverView: View {
             }
         }
         .padding(14)
-        .frame(width: 320)
+        .frame(width: 340)
     }
 
     private var subline: String {
@@ -143,26 +141,43 @@ struct PopoverView: View {
     private func stat(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-            Text(value).font(.callout.weight(.semibold)).monospacedDigit()
+            Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(.primary)
         }
         .frame(minWidth: 120, alignment: .leading)
     }
 
-    private enum Prominence { case normal, prominent }
-
-    private func actionButton(_ icon: String, _ title: String, _ p: Prominence = .normal, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon).frame(width: 16)
-                Text(title)
+    // One selectable mode row. Active = filled with the mode color + checkmark;
+    // inactive = subtle fill, tap to switch.
+    private func modeRow(_ mode: BattCalModel.ActiveMode, _ icon: String, _ title: String, _ subtitle: String, _ tint: Color) -> some View {
+        let active = model.activeMode == mode
+        return Button { model.select(mode) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(active ? tint : .secondary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+                }
                 Spacer()
+                if active {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(tint)
+                }
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
-        .padding(.vertical, 3)
-        .padding(.horizontal, 6)
-        .background(p == .prominent ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
-        .font(.callout)
+        .buttonStyle(.plain)
+        .padding(.vertical, 7).padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(active ? tint.opacity(0.16) : Color.primary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .strokeBorder(active ? tint.opacity(0.7) : Color.clear, lineWidth: 1.5)
+        )
+        .disabled(!model.reachable)
+        .opacity(model.reachable ? 1 : 0.5)
     }
 }
