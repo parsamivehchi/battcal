@@ -134,6 +134,9 @@ struct PopoverView: View {
             let t = mins >= 60 ? "\(mins / 60)h \(mins % 60)m" : "\(mins)m"
             parts.append("~\(t) until \(target)% at current draw")
         }
+        if model.engineLoaded, s?.paused != true, s?.state == "drain", s?.plugged == true {
+            parts.append(s?.mode == "calibration" ? "charger LED pulses green" : "charger LED dark = BattCal draining")
+        }
         return parts.joined(separator: " · ")
     }
 

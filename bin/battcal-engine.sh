@@ -79,6 +79,22 @@ stop_caffeinate() {
   fi
 }
 
+# MagSafe LED scheme (hardware has amber+green+off only; no other colors exist):
+#   dark = BattCal draining (longevity) | slow green pulse = calibration drain
+#   amber = actually charging | green = at target | normal Apple behavior = paused/off
+# LED_SCHEME: battcal (default) | truthful (always reflect charging) | off (never touch)
+LED_SCHEME=${LED_SCHEME:-battcal}
+LED_STATE=""
+led() {
+  case "$LED_SCHEME" in
+    off) return ;;
+    truthful) set -- enable ;;
+  esac
+  [ "$1" = "$LED_STATE" ] && return
+  LED_STATE=$1
+  "$BATT" magsafe-led "$1" >>"$LOG" 2>&1
+}
+
 # One detailed row per poll: what the battery is doing right now.
 log_telemetry() {
   local ior state chg pct rawcur rawmax mv ma temp aw watts
@@ -115,7 +131,7 @@ snapshot_csv() {
 
 begin_cycle() { date +%s > "$CYCLE_FILE"; }
 
-trap 'stop_caffeinate' EXIT TERM INT
+trap 'stop_caffeinate; "$BATT" magsafe-led enable >/dev/null 2>&1' EXIT TERM INT
 
 # v2.1: history CSV gained mode/band/duration columns; park legacy files aside.
 if [ -f "$CSV" ] && ! head -1 "$CSV" | grep -q ',mode,'; then
@@ -143,6 +159,7 @@ while true; do
     if [ "$(cat "$STATE_FILE")" != "paused" ]; then
       log "PAUSED by user - adapter re-enabled, normal charging"
       "$BATT" adapter enable >>"$LOG" 2>&1
+      led enable
       stop_caffeinate
       echo paused > "$STATE_FILE"
     fi
@@ -190,6 +207,7 @@ while true; do
         if [ "$AWAITING_AC" -eq 0 ]; then
           log "charger unplugged at ${P}% - cycling idle until AC returns"
           "$BATT" adapter enable >>"$LOG" 2>&1
+          led enable
           stop_caffeinate
           AWAITING_AC=1
         fi
@@ -200,6 +218,12 @@ while true; do
           "$BATT" adapter disable >>"$LOG" 2>&1
         fi
         start_caffeinate
+        if [ "$MODE" = "longevity" ]; then
+          led always-off
+        else
+          # calibration heartbeat: alternate dark/green once per poll
+          if [ "${LED_PULSE:-0}" -eq 0 ]; then led always-off; LED_PULSE=1; else led enable; LED_PULSE=0; fi
+        fi
         # If something re-enabled charging (batt daemon restart etc.), reassert the cut
         if is_charging; then
           log "charging detected during drain at ${P}% - reasserting adapter disable"
@@ -208,6 +232,7 @@ while true; do
       fi
       ;;
     charge)
+      led enable
       if [ "$MODE" = "longevity" ]; then
         if [ "$P" -ge "$HIGH" ]; then
           snapshot_csv
@@ -225,6 +250,7 @@ while true; do
       fi
       ;;
     hold)
+      led enable
       # Hold only exists in calibration mode; in longevity, leave full immediately.
       if [ "$MODE" = "longevity" ]; then
         snapshot_csv

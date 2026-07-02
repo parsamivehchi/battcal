@@ -17,6 +17,7 @@ rm -f "$AGENT_PLIST"
 say "Restoring normal charging"
 /opt/homebrew/bin/batt adapter enable 2>/dev/null || true
 /opt/homebrew/bin/batt limit 100 2>/dev/null || true
+/opt/homebrew/bin/batt magsafe-led disable 2>/dev/null || true
 
 say "Removing engine files"
 rm -rf "$HOME/.battcal"

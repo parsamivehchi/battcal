@@ -104,6 +104,23 @@ HOLD_SECS=7200  # hold at 100% (default 3600)
 POLL=15         # check interval seconds (default 30)
 ```
 
+## The charger light is the status light
+
+BattCal drives the MagSafe LED so the connector itself tells you what is happening
+(the hardware has only amber and green diodes; no other colors are physically
+possible, so BattCal uses *states* instead):
+
+| LED (while plugged in) | Meaning |
+|---|---|
+| **Dark** | Draining in longevity mode. A normal Mac never shows a dark connector, so dark = BattCal is working. |
+| **Slow green pulse** | Calibration-mode drain (heartbeat, ~30s). |
+| **Amber** | Actually charging. |
+| **Green** | At target / full, not charging. |
+| Normal Apple behavior | Paused or off. |
+
+Opt out with `LED_SCHEME=truthful` (LED always reflects charging) or
+`LED_SCHEME=off` (never touch the LED) in `~/.battcal/config`.
+
 ## Honesty and safety notes
 
 - **Calibration reveals the truth; it does not manufacture a number.** If you are hoping

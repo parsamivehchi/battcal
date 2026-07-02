@@ -75,6 +75,11 @@ const HOW_ROWS: Array<{ key: string; title: string; body: string }> = [
     title: 'Paused or Off',
     body: 'Pause (button above) or quit the engine and the software cut lifts immediately: your Mac charges to 100% like a normal Mac. Unplugging the charger also suspends cycling automatically until AC returns. Nothing persists except the logs.',
   },
+  {
+    key: 'led',
+    title: 'What the charger light means',
+    body: 'The MagSafe LED is BattCal\'s status light (the hardware only has amber and green, no other colors exist). Dark while plugged in = draining in longevity mode (a normal Mac never shows a dark connector, so dark = BattCal is working). Slow green pulse = calibration drain. Amber = actually charging. Green = at target, not charging. Paused or off = normal Apple behavior.',
+  },
 ];
 
 export default function App() {
