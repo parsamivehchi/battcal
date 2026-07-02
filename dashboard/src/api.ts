@@ -1,6 +1,10 @@
+export type Mode = 'longevity' | 'calibration';
+
 export interface Status {
   state: string;
   paused: boolean;
+  mode: Mode;
+  band: { low: number; high: number };
   pct: number | null;
   charging: boolean;
   plugged: boolean;
@@ -51,3 +55,4 @@ export const fetchCycles = () => get<CycleRow[]>('/api/cycles');
 export const fetchLog = (lines = 120) => get<string[]>(`/api/log?lines=${lines}`);
 export const postPause = () => fetch('/api/pause', { method: 'POST' });
 export const postResume = () => fetch('/api/resume', { method: 'POST' });
+export const postMode = (mode: Mode) => fetch(`/api/mode?mode=${mode}`, { method: 'POST' });

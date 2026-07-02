@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Area, AreaChart, CartesianGrid, Line, LineChart, ReferenceLine,
+  Area, AreaChart, CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
-  CycleRow, Status, TelemetryRow,
-  fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postPause, postResume,
+  CycleRow, Mode, Status, TelemetryRow,
+  fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postMode, postPause, postResume,
 } from './api';
 
 const RANGES = [
@@ -16,13 +16,22 @@ const RANGES = [
   { label: 'All', hours: 0 },
 ];
 
-const STATE_META: Record<string, { label: string; color: string; icon: string }> = {
-  drain: { label: 'Draining (calibration)', color: 'var(--status-serious)', icon: '⇣' },
-  charge: { label: 'Charging to 100%', color: 'var(--status-good)', icon: '⇡' },
-  hold: { label: 'Holding at full', color: 'var(--status-good)', icon: '✓' },
-  paused: { label: 'Paused (normal charging)', color: 'var(--series-1)', icon: '⏸' },
-  stopped: { label: 'Engine stopped', color: 'var(--text-muted)', icon: '○' },
-};
+const THEMES = ['auto', 'light', 'dark'] as const;
+type ThemePref = (typeof THEMES)[number];
+
+const DEFAULT_BAND = { low: 10, high: 90 };
+
+function stateMeta(s: Status | null) {
+  const band = s?.band ?? DEFAULT_BAND;
+  const map: Record<string, { label: string; color: string; icon: string }> = {
+    drain: { label: `Draining to ${band.low}%`, color: 'var(--status-serious)', icon: '⇣' },
+    charge: { label: `Charging to ${band.high}%`, color: 'var(--status-good)', icon: '⇡' },
+    hold: { label: 'Holding at full (calibration)', color: 'var(--status-good)', icon: '✓' },
+    paused: { label: 'Paused - charging like normal', color: 'var(--series-1)', icon: '⏸' },
+    stopped: { label: 'Engine off - normal charging', color: 'var(--text-muted)', icon: '○' },
+  };
+  return map[s?.state || 'stopped'] || map.stopped;
+}
 
 const fmtTime = (t: number, spanH: number) => {
   const d = new Date(t);
@@ -32,22 +41,39 @@ const fmtTime = (t: number, spanH: number) => {
 
 interface Pt { t: number; pct: number; w: number; temp: number; state: string }
 
-function ChartTooltip({ active, payload, label, spanH, unit }:
-  { active?: boolean; payload?: { value: number; name: string; color?: string }[]; label?: number; spanH: number; unit: string }) {
+function ChartTooltip({ active, payload, label, unit }:
+  { active?: boolean; payload?: { value: number; name: string; color?: string }[]; label?: number; unit: string }) {
   if (!active || !payload?.length || label === undefined) return null;
   return (
     <div className="tooltip">
       <div className="t">{new Date(label).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</div>
       {payload.map((p) => (
         <div className="row" key={p.name}>
-          <span className="swatch" style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} />
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: 'inline-block' }} />
           {p.name}: <b>{typeof p.value === 'number' ? p.value.toFixed(1) : p.value}{unit}</b>
         </div>
       ))}
-      {spanH > 0 ? null : null}
     </div>
   );
 }
+
+const HOW_ROWS: Array<{ key: string; title: string; body: string }> = [
+  {
+    key: 'longevity',
+    title: 'Longevity · 10-90% (default)',
+    body: 'BattCal software-cuts wall power so the Mac runs on battery down to 10%, then restores power and charges to 90%, then turns around and repeats. It never reaches 100% and never sits at full: lithium cells age fastest parked at high charge. The charger stays plugged in the whole time; BattCal decides when power actually flows.',
+  },
+  {
+    key: 'calibration',
+    title: 'Calibration · 5-100% (on demand)',
+    body: 'Full-range passes: drain to 5%, charge to 100%, hold one hour, repeat. This feeds the battery gauge and macOS the full-range data their health estimates calibrate against, so the "Maximum Capacity" numbers converge on the truth. Use it for a few days when you want the health numbers re-learned, then switch back to Longevity.',
+  },
+  {
+    key: 'off',
+    title: 'Paused or Off',
+    body: 'Pause (button above) or quit the engine and the software cut lifts immediately: your Mac charges to 100% like a normal Mac. Unplugging the charger also suspends cycling automatically until AC returns. Nothing persists except the logs.',
+  },
+];
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -56,7 +82,27 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [hours, setHours] = useState(12);
   const [err, setErr] = useState<string | null>(null);
-  const [theme, setTheme] = useState<string>(document.documentElement.dataset.theme || 'light');
+  const [showHow, setShowHow] = useState(false);
+  const [themePref, setThemePref] = useState<ThemePref>(
+    () => ((localStorage.getItem('battcal-theme') as ThemePref) || 'auto'),
+  );
+
+  // Theme: Auto follows the system appearance live; manual pins it.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const resolved = themePref === 'auto' ? (mq.matches ? 'dark' : 'light') : themePref;
+      document.documentElement.dataset.theme = resolved;
+    };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [themePref]);
+
+  const pickTheme = (p: ThemePref) => {
+    localStorage.setItem('battcal-theme', p);
+    setThemePref(p);
+  };
 
   const refreshStatus = useCallback(async () => {
     try { setStatus(await fetchStatus()); setErr(null); }
@@ -72,11 +118,9 @@ export default function App() {
   useEffect(() => { refreshStatus(); const id = setInterval(refreshStatus, 15000); return () => clearInterval(id); }, [refreshStatus]);
   useEffect(() => { refreshData(hours); const id = setInterval(() => refreshData(hours), 60000); return () => clearInterval(id); }, [hours, refreshData]);
 
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem('battcal-theme', next);
-    setTheme(next);
+  const switchMode = async (m: Mode) => {
+    await postMode(m);
+    refreshStatus();
   };
 
   const pts: Pt[] = useMemo(() => rows.map((r) => ({
@@ -99,22 +143,32 @@ export default function App() {
     apple: typeof c.apple_health === 'string' ? Number(String(c.apple_health).replace('%', '')) : c.apple_health,
   })), [cycles, status?.designMah]);
 
-  const meta = STATE_META[status?.state || 'stopped'] || STATE_META.stopped;
-  const axis = { stroke: 'var(--baseline)', tick: { fill: 'var(--text-muted)', fontSize: 11 }, tickLine: false } as const;
+  const lastHealth = healthPts.at(-1);
+  const meta = stateMeta(status);
+  const band = status?.band ?? DEFAULT_BAND;
+  const mode = status?.mode ?? 'longevity';
+  const activeHowKey = status?.paused || status?.state === 'stopped' ? 'off' : mode;
+  const axis = { stroke: 'var(--baseline)', tick: { fill: 'var(--text-secondary)', fontSize: 11.5 }, tickLine: false } as const;
 
   return (
     <div className="shell">
       <header className="topbar">
-        <div className="brand">BattCal<small>battery calibration</small></div>
+        <div className="brand">BattCal<small>battery band cycler</small></div>
         <span className="pill" title={status?.updatedAt || ''}>
           <span className="dot" style={{ background: meta.color }} />
           {meta.icon} {meta.label}
         </span>
         <div className="spacer" />
         {status?.paused
-          ? <button className="action primary" onClick={async () => { await postResume(); refreshStatus(); }}>Resume calibration</button>
-          : <button className="action primary" onClick={async () => { await postPause(); refreshStatus(); }}>Charge now (pause)</button>}
-        <button className="action" onClick={toggleTheme}>{theme === 'dark' ? 'Light' : 'Dark'} mode</button>
+          ? <button className="action primary" onClick={async () => { await postResume(); refreshStatus(); }}>Resume cycling</button>
+          : <button className="action primary" onClick={async () => { await postPause(); refreshStatus(); }}>Charge full now (pause)</button>}
+        <div className="seg" role="group" aria-label="Theme">
+          {THEMES.map((t) => (
+            <button key={t} className={themePref === t ? 'on' : ''} onClick={() => pickTheme(t)}>
+              {t === 'auto' ? 'Auto' : t === 'light' ? 'Light' : 'Dark'}
+            </button>
+          ))}
+        </div>
       </header>
 
       {err && <div className="err">Cannot reach the BattCal engine API: {err}</div>}
@@ -123,7 +177,8 @@ export default function App() {
         <div className="tile"><div className="label">Battery</div><div className="value">{status?.pct ?? '--'}<small>%</small></div>
           <div className="sub">{status?.plugged ? `plugged in (${status.adapterW}W)` : 'on battery'}</div></div>
         <div className="tile"><div className="label">Power flow</div>
-          <div className="value">{status?.batteryW !== null && status?.batteryW !== undefined ? (status.batteryW > 0 ? '+' : '') + status.batteryW : '--'}<small>W</small></div>
+          <div className="value" style={{ color: status?.batteryW ? (status.batteryW > 0 ? 'var(--diverge-pos)' : 'var(--diverge-neg)') : undefined }}>
+            {status?.batteryW !== null && status?.batteryW !== undefined ? (status.batteryW > 0 ? '+' : '') + status.batteryW : '--'}<small>W</small></div>
           <div className="sub">{status?.charging ? 'charging' : status?.plugged ? 'not charging' : 'discharging'}</div></div>
         <div className="tile"><div className="label">Temperature</div><div className="value">{status?.tempC ?? '--'}<small>&deg;C</small></div>
           <div className="sub">battery pack</div></div>
@@ -132,7 +187,7 @@ export default function App() {
         <div className="tile"><div className="label">Apple health</div><div className="value">{status?.appleHealth ?? '--'}</div>
           <div className="sub">smoothed (powerd)</div></div>
         <div className="tile"><div className="label">Cycles</div><div className="value">{status?.cycles ?? '--'}</div>
-          <div className="sub">{cycles.length} calibration cycles logged</div></div>
+          <div className="sub">{cycles.length} band cycles logged</div></div>
       </section>
 
       <div className="filters">
@@ -140,26 +195,38 @@ export default function App() {
         {RANGES.map((r) => (
           <button key={r.label} className={hours === r.hours ? 'on' : ''} onClick={() => setHours(r.hours)}>{r.label}</button>
         ))}
+        <div className="spacer" />
+        <span className="label">Mode</span>
+        <div className="seg" role="group" aria-label="Mode">
+          <button className={mode === 'longevity' ? 'on' : ''} onClick={() => switchMode('longevity')} title="Cycle 10-90%, never sit at 100%">
+            Longevity 10-90
+          </button>
+          <button className={mode === 'calibration' ? 'on' : ''} onClick={() => switchMode('calibration')} title="Full 5-100% passes to re-train the health numbers">
+            Calibration 5-100
+          </button>
+        </div>
       </div>
 
       <div className="grid2">
         <div className="card">
           <h2>Battery charge</h2>
-          <p className="hint">percent, drain floor at 5%</p>
+          <p className="hint">percent; shaded band = {band.low}-{band.high}% ({mode})</p>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={pts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <defs>
                 <linearGradient id="pctFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--series-1)" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="var(--series-1)" stopOpacity={0.02} />
+                  <stop offset="0%" stopColor="var(--series-1)" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="var(--series-1)" stopOpacity={0.03} />
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(t) => fmtTime(t, spanH)} {...axis} />
               <YAxis domain={[0, 100]} {...axis} />
-              <Tooltip content={<ChartTooltip spanH={spanH} unit="%" />} />
-              <ReferenceLine y={5} stroke="var(--text-muted)" strokeDasharray="4 4" />
-              <Area type="monotone" dataKey="pct" name="charge" stroke="var(--series-1)" strokeWidth={2} fill="url(#pctFill)" dot={false} isAnimationActive={false} />
+              <Tooltip content={<ChartTooltip unit="%" />} />
+              <ReferenceArea y1={band.low} y2={band.high} fill="var(--accent-wash)" stroke="none" />
+              <ReferenceLine y={band.low} stroke="var(--text-muted)" strokeDasharray="4 4" />
+              <ReferenceLine y={band.high} stroke="var(--text-muted)" strokeDasharray="4 4" />
+              <Area type="monotone" dataKey="pct" name="charge" stroke="var(--series-1)" strokeWidth={2.5} fill="url(#pctFill)" dot={false} isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -175,16 +242,16 @@ export default function App() {
                   <stop offset={powerOffset} stopColor="var(--diverge-neg)" />
                 </linearGradient>
                 <linearGradient id="wFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset={powerOffset} stopColor="var(--diverge-pos)" stopOpacity={0.18} />
-                  <stop offset={powerOffset} stopColor="var(--diverge-neg)" stopOpacity={0.18} />
+                  <stop offset={powerOffset} stopColor="var(--diverge-pos)" stopOpacity={0.22} />
+                  <stop offset={powerOffset} stopColor="var(--diverge-neg)" stopOpacity={0.22} />
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(t) => fmtTime(t, spanH)} {...axis} />
               <YAxis {...axis} />
-              <Tooltip content={<ChartTooltip spanH={spanH} unit=" W" />} />
+              <Tooltip content={<ChartTooltip unit=" W" />} />
               <ReferenceLine y={0} stroke="var(--baseline)" />
-              <Area type="monotone" dataKey="w" name="power" stroke="url(#wStroke)" strokeWidth={2} fill="url(#wFill)" dot={false} isAnimationActive={false} />
+              <Area type="monotone" dataKey="w" name="power" stroke="url(#wStroke)" strokeWidth={2.5} fill="url(#wFill)" dot={false} isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -197,39 +264,58 @@ export default function App() {
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} tickFormatter={(t) => fmtTime(t, spanH)} {...axis} />
               <YAxis domain={['auto', 'auto']} {...axis} />
-              <Tooltip content={<ChartTooltip spanH={spanH} unit=" C" />} />
-              <Line type="monotone" dataKey="temp" name="temp" stroke="var(--series-2)" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Tooltip content={<ChartTooltip unit=" C" />} />
+              <Line type="monotone" dataKey="temp" name="temp" stroke="var(--series-2)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
         <div className="card">
-          <h2>Health per calibration cycle</h2>
-          <p className="hint">percent of design capacity, AppleCare threshold at 80%</p>
+          <h2>Health per cycle</h2>
+          <p className="hint">percent of design capacity; AppleCare threshold at 80%</p>
           <div className="legend">
-            <span className="key"><span className="swatch" style={{ background: 'var(--series-1)' }} />gauge raw</span>
-            <span className="key"><span className="swatch" style={{ background: 'var(--series-2)' }} />gauge nominal</span>
-            <span className="key"><span className="swatch" style={{ background: 'var(--series-3)' }} />Apple smoothed</span>
+            <span className="key"><span className="swatch" style={{ background: 'var(--series-1)' }} />gauge raw{lastHealth?.raw != null ? ` · ${lastHealth.raw}%` : ''}</span>
+            <span className="key"><span className="swatch" style={{ background: 'var(--series-2)' }} />gauge nominal{lastHealth?.nominal != null ? ` · ${lastHealth.nominal}%` : ''}</span>
+            <span className="key"><span className="swatch" style={{ background: 'var(--series-3)' }} />Apple smoothed{lastHealth?.apple != null ? ` · ${lastHealth.apple}%` : ''}</span>
           </div>
-          <ResponsiveContainer width="100%" height={190}>
+          <ResponsiveContainer width="100%" height={186}>
             <LineChart data={healthPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="cycle" type="number" domain={['dataMin', 'dataMax']} {...axis} allowDecimals={false} />
               <YAxis domain={[70, 100]} {...axis} />
-              <Tooltip content={<ChartTooltip spanH={0} unit="%" />} />
+              <Tooltip content={<ChartTooltip unit="%" />} />
               <ReferenceLine y={80} stroke="var(--status-critical)" strokeDasharray="4 4" />
-              <Line type="monotone" dataKey="raw" name="gauge raw" stroke="var(--series-1)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
-              <Line type="monotone" dataKey="nominal" name="gauge nominal" stroke="var(--series-2)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
-              <Line type="monotone" dataKey="apple" name="Apple smoothed" stroke="var(--series-3)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="raw" name="gauge raw" stroke="var(--series-1)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="nominal" name="gauge nominal" stroke="var(--series-2)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="apple" name="Apple smoothed" stroke="var(--series-3)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
+      <div className="card">
+        <button className="how-toggle" onClick={() => setShowHow((s) => !s)} aria-expanded={showHow}>
+          {showHow ? '▾' : '▸'} How BattCal works
+        </button>
+        {showHow && (
+          <div className="how-rows">
+            {HOW_ROWS.map((r) => (
+              <div key={r.key} className={`how-row${activeHowKey === r.key ? ' active' : ''}`}>
+                <div className="how-title">
+                  {r.title}
+                  {activeHowKey === r.key && <span className="how-now">active now</span>}
+                </div>
+                <div className="how-body">{r.body}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid2">
         <div className="card">
           <h2>Cycle history</h2>
-          <p className="hint">one row per completed calibration cycle</p>
+          <p className="hint">one row per completed cycle (longevity turnaround or calibration hold)</p>
           <table className="data">
             <thead><tr><th>Completed</th><th>Cycle</th><th>Raw mAh</th><th>Nominal mAh</th><th>Apple</th></tr></thead>
             <tbody>

@@ -20,16 +20,29 @@ const NAMESPACES = [
   {
     state: '/var/tmp/battery-calibrate.state',
     pause: '/var/tmp/battery-calibrate.pause',
+    mode: '/var/tmp/battery-calibrate.mode',
     cycles: join(HOME, 'Library/Logs/battery-calibrate-history.csv'),
     log: join(HOME, 'Library/Logs/battery-calibrate.log'),
   },
   {
     state: '/var/tmp/battcal.state',
     pause: '/var/tmp/battcal.pause',
+    mode: '/var/tmp/battcal.mode',
     cycles: join(HOME, 'Library/Logs/battcal-history.csv'),
     log: join(HOME, 'Library/Logs/battcal.log'),
   },
 ];
+const MODES = ['longevity', 'calibration'];
+const BANDS = { longevity: { low: 10, high: 90 }, calibration: { low: 5, high: 100 } };
+
+function readMode(n) {
+  try {
+    const m = readFileSync(n.mode, 'utf8').trim();
+    return MODES.includes(m) ? m : 'longevity';
+  } catch {
+    return 'longevity';
+  }
+}
 const TELEMETRY = join(HOME, 'Library/Logs/battcal-telemetry.csv');
 
 const ns = () => NAMESPACES.find((n) => existsSync(n.state)) || NAMESPACES[1];
@@ -70,9 +83,12 @@ function status() {
   const paused = existsSync(n.pause);
   const cyclesRows = readCsv(n.cycles);
   const lastCycle = cyclesRows.at(-1) || null;
+  const mode = readMode(n);
   return {
     state: paused ? 'paused' : state,
     paused,
+    mode,
+    band: BANDS[mode],
     pct,
     charging,
     plugged: adapter !== null && Number(adapter[1]) > 0,
@@ -175,6 +191,18 @@ createServer((req, res) => {
     if (p === '/api/log') return json(res, 200, logTail(Number(url.searchParams.get('lines') || 120)));
     if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); return json(res, 200, { paused: true }); }
     if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} return json(res, 200, { paused: false }); }
+    if (p === '/api/mode' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        let m = url.searchParams.get('mode');
+        try { m = JSON.parse(body).mode || m; } catch {}
+        if (!MODES.includes(m)) return json(res, 400, { error: `mode must be one of: ${MODES.join(', ')}` });
+        writeFileSync(ns().mode, m + '\n');
+        return json(res, 200, { mode: m, band: BANDS[m] });
+      });
+      return;
+    }
     if (p.startsWith('/api/')) return json(res, 404, { error: 'not found' });
     return serveStatic(req, res);
   } catch (e) {

@@ -1,0 +1,24 @@
+name: BattCalBar
+options:
+  bundleIdPrefix: com.parsa
+  deploymentTarget:
+    macOS: "14.0"
+targets:
+  BattCalBar:
+    type: application
+    platform: macOS
+    sources: [BattCalBar]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.parsa.battcalbar
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT - Parsa Mivehchi"
+        SWIFT_VERSION: "5.10"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        COMBINE_HIDPI_IMAGES: YES

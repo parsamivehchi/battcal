@@ -23,17 +23,17 @@
   --page: #0d0d0d;
   --surface-1: #1a1a19;
   --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --grid: #2c2c2a;
-  --baseline: #383835;
-  --border: rgba(255, 255, 255, 0.10);
+  --text-secondary: #cfcec4;
+  --text-muted: #99978f;
+  --grid: #343431;
+  --baseline: #45453f;
+  --border: rgba(255, 255, 255, 0.12);
   --series-1: #3987e5;
   --series-2: #199e70;
   --series-3: #c98500;
   --diverge-pos: #3987e5;
   --diverge-neg: #e66767;
-  --accent-wash: rgba(57, 135, 229, 0.16);
+  --accent-wash: rgba(57, 135, 229, 0.18);
 }
 
 * { box-sizing: border-box; }
@@ -129,6 +129,38 @@ table.data tr:last-child td { border-bottom: none; }
 }
 .tooltip .t { color: var(--text-muted); margin-bottom: 4px; }
 .tooltip .row { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+.seg {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; background: var(--surface-1);
+}
+.seg button {
+  border: none; background: transparent; color: var(--text-secondary);
+  padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+  border-right: 1px solid var(--border);
+}
+.seg button:last-child { border-right: none; }
+.seg button.on { background: var(--accent-wash); color: var(--text-primary); }
+.seg button:focus-visible, .filters button:focus-visible, button.action:focus-visible {
+  outline: 2px solid var(--series-1); outline-offset: 1px;
+}
+
+.how-toggle {
+  border: none; background: transparent; color: var(--text-primary);
+  font-size: 14px; font-weight: 700; cursor: pointer; padding: 2px 0 8px;
+  font-family: inherit;
+}
+.how-rows { display: grid; gap: 10px; padding-bottom: 10px; }
+.how-row {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+}
+.how-row.active { border-color: var(--series-1); background: var(--accent-wash); }
+.how-title { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.how-now {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #fff; background: var(--series-1); border-radius: 999px; padding: 2px 8px;
+}
+.how-body { font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.5; }
 
 .footer { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
 .footer a { color: var(--series-1); text-decoration: none; }

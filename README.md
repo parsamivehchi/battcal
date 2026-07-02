@@ -1,6 +1,16 @@
 # BattCal
 
-**Full-range battery calibration for Apple Silicon MacBooks, with a menu bar switch.**
+**Battery band cycling for Apple Silicon MacBooks: longevity 10-90% by default, full-range calibration on demand. Native menu bar app + live web dashboard.**
+
+## Modes
+
+| Mode | Band | What it does |
+|---|---|---|
+| **Longevity** (default) | 10-90% | Cycles the battery inside the band while plugged in. Never reaches 100%, never sits at full. Lithium cells age fastest parked at high charge; this keeps yours moving in the healthy middle. |
+| **Calibration** (on demand) | 5-100% + 1h hold | Full-range passes that feed the gauge and macOS the data their health estimates re-learn from. Run it for a few days when the health numbers look stale, then switch back. |
+| **Paused / Off** | - | The software cut lifts instantly; the Mac charges to 100% like a normal Mac. Unplugging also auto-suspends cycling until AC returns. |
+
+Switch modes from the menu bar app, the dashboard, or `echo longevity > /var/tmp/battcal.mode`.
 
 macOS shows you a battery health number ("Maximum Capacity") that is a heavily smoothed
 estimate computed by `powerd`. The battery's own gas gauge often disagrees, sometimes by
@@ -57,7 +67,8 @@ Calibration converges on the truth, in whichever direction the truth lies.
 - **Plugged-in-only:** the engine detects the physical charger via `AdapterDetails` in
   the SMC (which survives the software cut, unlike `ExternalConnected`). Unplug and it
   instantly restores normal charging behavior and stops blocking sleep until AC returns.
-- A **SwiftBar plugin** gives you the menu bar status and the pause/resume/stop buttons.
+- A **native SwiftUI menu bar app** (`menubar/`, macOS 14+) shows a live battery glyph plus a configurable readout (time-to-target, watts, percent, or true health), a 3h sparkline, mode switcher, and one-click pause/off. Build: `cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj -scheme BattCalBar -configuration Release -derivedDataPath build build`, then copy `BattCalBar.app` to /Applications. A lighter **SwiftBar plugin** (`swiftbar/`) remains for anyone who prefers it; run one or the other, not both.
+- A **web dashboard** (`dashboard/` + `server/`) with live charts: battery %, power flow, temperature, and health-per-cycle, band shading, cycle table, event log, mode/pause controls, and an Auto/Light/Dark theme that follows the system appearance.
 - Survives reboots. Pause state is a file (`/var/tmp/battcal.pause`), so anything can
   toggle it: the menu bar, a Shortcut, cron, or you.
 
