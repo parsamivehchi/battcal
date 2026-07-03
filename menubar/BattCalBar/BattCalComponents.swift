@@ -1,22 +1,76 @@
 import SwiftUI
 import Charts
+import AppKit
+
+// Native window vibrancy (NSVisualEffectView) so the window is translucent like the menu
+// bar popover - the desktop shows through behind the content.
+struct VisualEffectView: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blending: NSVisualEffectView.BlendingMode = .behindWindow
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = blending
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ v: NSVisualEffectView, context: Context) {
+        v.material = material
+        v.blendingMode = blending
+    }
+}
 
 // Reusable pieces shared by the menu-bar popover (PopoverView) and the standalone
-// window (MainWindowView), so both surfaces stay in sync and each view stays focused.
+// window (MainWindowView). The window adopts Liquid Glass (macOS 26+) with a material
+// fallback on older systems, so call sites stay clean and OSS-safe.
 
-// A subtle grouped card container that gives the window sections depth and grouping.
-struct Card<Content: View>: View {
-    var padding: CGFloat = 12
+extension View {
+    // Liquid Glass surface with a material fallback. Apply AFTER layout/appearance modifiers.
+    @ViewBuilder func glassCard(tint: Color? = nil, cornerRadius: CGFloat = 16) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if #available(macOS 26.0, *) {
+            let glass: Glass = tint != nil ? .regular.tint(tint!.opacity(0.28)) : .regular
+            self.glassEffect(glass, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+        }
+    }
+    // Liquid Glass button style, with native bordered fallback on older systems.
+    @ViewBuilder func glassButtonStyle(prominent: Bool = false, tint: Color = .accentColor) -> some View {
+        if #available(macOS 26.0, *) {
+            if prominent { self.buttonStyle(.glassProminent).tint(tint) }
+            else { self.buttonStyle(.glass).tint(tint) }
+        } else {
+            if prominent { self.buttonStyle(.borderedProminent).tint(tint) }
+            else { self.buttonStyle(.bordered).tint(tint) }
+        }
+    }
+}
+
+// Wraps grouped glass surfaces so they blend and morph (macOS 26); passthrough otherwise.
+struct GlassStack<Content: View>: View {
+    var spacing: CGFloat = 14
+    @ViewBuilder var content: Content
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
+    }
+}
+
+// A grouped glass card container for the window sections.
+struct GlassCard<Content: View>: View {
+    var tint: Color? = nil
+    var padding: CGFloat = 13
     @ViewBuilder var content: Content
     var body: some View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-            )
+            .glassCard(tint: tint)
     }
 }
 
@@ -25,6 +79,34 @@ struct SectionLabel: View {
     let text: String
     var body: some View {
         Text(text).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).tracking(0.5)
+    }
+}
+
+// A full-width tinted-fill action button for use INSIDE glass cards / banners (a solid
+// control on glass, never glass-on-glass). Standalone primary buttons use glassButtonStyle.
+struct GlassActionButton: View {
+    let title: String
+    let icon: String
+    var tint: Color = .accentColor
+    var enabled: Bool = true
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).frame(width: 18)
+                Text(title).fontWeight(.semibold)
+                Spacer(minLength: 6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 7).padding(.horizontal, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        .foregroundStyle(tint)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.5)
     }
 }
 
@@ -56,8 +138,7 @@ struct LiveChart: View {
     }
 }
 
-// A labelled gradient progress meter (charge / health) with an optional reference marker
-// (e.g. the 80% AppleCare line on the health bar).
+// A labelled gradient progress meter (charge / health) with an optional reference marker.
 struct MeterBar: View {
     let label: String
     let valueText: String
@@ -73,7 +154,7 @@ struct MeterBar: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.10))
+                    Capsule().fill(Color.primary.opacity(0.12))
                     Capsule()
                         .fill(LinearGradient(colors: [tint.opacity(0.75), tint], startPoint: .leading, endPoint: .trailing))
                         .frame(width: max(6, min(1, fraction) * geo.size.width))
@@ -88,8 +169,7 @@ struct MeterBar: View {
     }
 }
 
-// The three-mode selector (Longevity / Calibration / Normal). Active row is filled
-// with the mode color plus a checkmark; tap an inactive row to switch.
+// The three-mode selector (Longevity / Calibration / Normal).
 struct ModeSelector: View {
     @ObservedObject var model: BattCalModel
     var body: some View {
@@ -118,15 +198,14 @@ struct ModeSelector: View {
         }
         .buttonStyle(.plain)
         .padding(.vertical, 7).padding(.horizontal, 10)
-        .background(RoundedRectangle(cornerRadius: 9).fill(active ? tint.opacity(0.16) : Color.primary.opacity(0.05)))
+        .background(RoundedRectangle(cornerRadius: 9).fill(active ? tint.opacity(0.18) : Color.primary.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(active ? tint.opacity(0.7) : Color.clear, lineWidth: 1.5))
         .disabled(!model.reachable)
         .opacity(model.reachable ? 1 : 0.5)
     }
 }
 
-// The throttle / benchmark-break banner. Pass a ticking clock so the break countdown
-// updates smoothly. Renders nothing when neither condition applies.
+// The throttle / benchmark-break banner as a tinted glass surface. Pass a ticking clock.
 struct PowerBanner: View {
     @ObservedObject var model: BattCalModel
     let now: Date
@@ -149,7 +228,7 @@ struct PowerBanner: View {
     private func fmt(_ secs: Int) -> String { String(format: "%d:%02d", secs / 60, secs % 60) }
     private func banner(tint: Color, icon: String, title: String, message: String,
                         actionTitle: String, action: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundStyle(tint).font(.system(size: 14, weight: .semibold))
                 Text(title).font(.callout.weight(.semibold))
@@ -157,18 +236,9 @@ struct PowerBanner: View {
             }
             Text(message).font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button(action: action) {
-                Text(actionTitle).font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 6)
-                    .background(tint.opacity(0.9), in: RoundedRectangle(cornerRadius: 7))
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .disabled(!model.reachable)
-            .opacity(model.reachable ? 1 : 0.5)
+            GlassActionButton(title: actionTitle, icon: "speedometer", tint: tint, action: action)
         }
-        .padding(11)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(tint.opacity(0.12)))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        .padding(12)
+        .glassCard(tint: tint)
     }
 }

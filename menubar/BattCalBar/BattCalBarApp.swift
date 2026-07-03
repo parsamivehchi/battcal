@@ -74,14 +74,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let hosting = NSHostingController(rootView: MainWindowView(model: model))
             let w = NSWindow(contentViewController: hosting)
             w.title = "BattCal"
-            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            w.setContentSize(NSSize(width: 360, height: 512))
+            // Translucent, unified title bar (traffic lights float over the vibrant content).
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isMovableByWindowBackground = true
+            w.isOpaque = false
+            w.backgroundColor = .clear
+            w.setContentSize(NSSize(width: 620, height: 712))
             w.isReleasedWhenClosed = false
-            w.center()
+            positionNearStatusItem(w)
             mainWindow = w
         }
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // Open the window near where the user clicked (the menu bar item / dock), pinned just
+    // below the menu bar on the screen that click is on.
+    private func positionNearStatusItem(_ w: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
+        guard let vis = screen?.visibleFrame else { w.center(); return }
+        let x = min(max(vis.minX + 12, mouse.x - w.frame.width / 2), vis.maxX - w.frame.width - 12)
+        let y = vis.maxY - w.frame.height - 8
+        w.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     @objc private func togglePopover() {

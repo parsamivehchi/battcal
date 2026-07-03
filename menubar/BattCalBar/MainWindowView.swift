@@ -1,74 +1,73 @@
 import SwiftUI
 
 // The standalone, resizable window (opened from the popover's pop-out button or by
-// clicking the Dock icon). A polished, dense coconutBattery-style read-out over the
-// same live BattCalModel that drives the menu bar popover.
+// clicking the Dock icon). Tabbed like coconutBattery, with a wide Liquid Glass layout
+// that shows everything at once - no scrolling or resizing needed.
 struct MainWindowView: View {
+    @ObservedObject var model: BattCalModel
+    @State private var tab = 0
+
+    var body: some View {
+        TabView(selection: $tab) {
+            ThisMacTab(model: model)
+                .tabItem { Label("This Mac", systemImage: "laptopcomputer") }.tag(0)
+            HistoryTab(model: model)
+                .tabItem { Label("History", systemImage: "chart.xyaxis.line") }.tag(1)
+            GeniusBarTab(model: model)
+                .tabItem { Label("Genius Bar", systemImage: "cross.case.fill") }.tag(2)
+        }
+        .frame(minWidth: 560, minHeight: 460)
+        .background(VisualEffectView().ignoresSafeArea())
+    }
+}
+
+// The main glance tab: a wide two-column dashboard that fits without scrolling.
+struct ThisMacTab: View {
     @ObservedObject var model: BattCalModel
     private var s: EngineStatus? { model.status }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                header
+            GlassStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
+                    header
 
-                if model.isDischarging || model.breakUntil != nil {
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        PowerBanner(model: model, now: ctx.date)
-                    }
-                }
-
-                Card {
-                    VStack(spacing: 11) {
-                        MeterBar(label: "Battery charge",
-                                 valueText: s?.pct.map { "\($0)%" } ?? "--",
-                                 fraction: Double(s?.pct ?? 0) / 100,
-                                 tint: model.stateColor)
-                        MeterBar(label: "Battery health (true)",
-                                 valueText: s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--",
-                                 fraction: (s?.rawHealthPct ?? 0) / 100,
-                                 tint: (s?.rawHealthPct ?? 100) >= 80 ? .green : .orange,
-                                 marker: 0.80)
-                    }
-                }
-
-                if !model.spark.isEmpty {
-                    Card {
-                        VStack(alignment: .leading, spacing: 8) {
-                            SectionLabel(text: "LAST 3 HOURS")
-                            LiveChart(spark: model.spark, height: 92)
+                    if model.isDischarging || model.breakUntil != nil {
+                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                            PowerBanner(model: model, now: ctx.date)
                         }
                     }
-                }
 
-                Card { statGrid }
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: 12) {
+                            GlassCard { meters }
+                            GlassCard { actions }
+                            GlassCard { modeCard }
+                        }
+                        VStack(spacing: 12) {
+                            GlassCard { chartCard }
+                            GlassCard { statGrid }
+                        }
+                    }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    SectionLabel(text: "MODE")
-                    ModeSelector(model: model)
+                    footer
                 }
-                if !model.reachable {
-                    Text("BattCal server offline \u{2013} controls disabled").font(.caption).foregroundStyle(.secondary)
-                }
-
-                footer
+                .padding(16)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minWidth: 340, minHeight: 420)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
+
+    // MARK: hero header
 
     private var header: some View {
         HStack(spacing: 14) {
             chargeRing
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Circle().fill(model.stateColor).frame(width: 8, height: 8)
-                    Text(model.stateLine).font(.title3.weight(.semibold))
+                    Circle().fill(model.stateColor).frame(width: 9, height: 9)
+                    Text(model.stateLine).font(.title2.weight(.bold))
                 }
-                Text(subline).font(.caption).foregroundStyle(.secondary)
+                Text(subline).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -78,20 +77,65 @@ struct MainWindowView: View {
 
     private var chargeRing: some View {
         ZStack {
-            Circle().stroke(Color.primary.opacity(0.12), lineWidth: 5)
+            Circle().stroke(Color.primary.opacity(0.12), lineWidth: 6)
             Circle()
                 .trim(from: 0, to: CGFloat(min(100, max(0, s?.pct ?? 0))) / 100)
-                .stroke(model.stateColor, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .stroke(model.stateColor, style: StrokeStyle(lineWidth: 6, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text(s?.pct.map { "\($0)" } ?? "--")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
                 .monospacedDigit()
         }
-        .frame(width: 60, height: 60)
+        .frame(width: 68, height: 68)
+    }
+
+    // MARK: left column
+
+    private var meters: some View {
+        VStack(spacing: 11) {
+            MeterBar(label: "Battery charge",
+                     valueText: s?.pct.map { "\($0)%" } ?? "--",
+                     fraction: Double(s?.pct ?? 0) / 100,
+                     tint: model.stateColor)
+            MeterBar(label: "Battery health (true)",
+                     valueText: s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--",
+                     fraction: (s?.rawHealthPct ?? 0) / 100,
+                     tint: (s?.rawHealthPct ?? 100) >= 80 ? .green : .orange,
+                     marker: 0.80)
+        }
+    }
+
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "QUICK ACTIONS")
+            GlassActionButton(title: "Charge to 100% now", icon: "bolt.fill", tint: .blue, enabled: model.reachable) { model.select(.normal) }
+            GlassActionButton(title: "Deep calibrate now", icon: "gauge.with.needle", tint: .orange, enabled: model.reachable) { model.select(.calibration) }
+            GlassActionButton(title: "Benchmark break (30 min)", icon: "speedometer", tint: .green, enabled: model.reachable) { model.benchmarkBreak(minutes: 30) }
+        }
+    }
+
+    private var modeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "MODE")
+            ModeSelector(model: model)
+        }
+    }
+
+    // MARK: right column
+
+    private var chartCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "LAST 3 HOURS")
+            if model.spark.isEmpty {
+                Text("collecting telemetry...").font(.caption).foregroundStyle(.secondary).frame(height: 150)
+            } else {
+                LiveChart(spark: model.spark, height: 150)
+            }
+        }
     }
 
     private var statGrid: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 13) {
             GridRow {
                 cell("battery.100percent", "Full charge", s?.rawMah.map { String(format: "%.0f mAh", $0) } ?? "--")
                 cell("square.dashed", "Design", s?.designMah.map { String(format: "%.0f mAh", $0) } ?? "--")
@@ -123,20 +167,22 @@ struct MainWindowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: footer
+
     private var footer: some View {
         Button { model.openDashboard() } label: {
             HStack {
-                Image(systemName: "chart.xyaxis.line").frame(width: 16)
+                Image(systemName: "chart.xyaxis.line")
                 Text("Open web dashboard").fontWeight(.semibold)
                 Spacer()
                 Image(systemName: "arrow.up.forward").font(.caption)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .padding(.vertical, 8).padding(.horizontal, 12)
-        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .foregroundStyle(.white)
+        .glassButtonStyle(prominent: true, tint: .accentColor)
+        .controlSize(.large)
     }
 
     private var subline: String {

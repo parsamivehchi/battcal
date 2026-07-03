@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UserNotifications
 
 // What the menu bar label shows next to the battery glyph. macOS already has
 // its own percent readout, so the smart default is time-to-target.
@@ -40,8 +41,10 @@ struct EngineStatus: Codable {
     var nominalHealthPct: Double?
     var designCycles: Int?
     var condition: String?
+    var prep: PrepInfo?
 
     struct Band: Codable { var low: Int; var high: Int }
+    struct PrepInfo: Codable { var active: Bool; var startedAt: Double? }
 }
 
 struct TelemetryPoint: Codable, Identifiable {
@@ -59,10 +62,41 @@ struct TelemetryPoint: Codable, Identifiable {
     var date: Date { Self.parser.date(from: ts) ?? .distantPast }
 }
 
+// One logged band cycle (health snapshot), from /api/cycles. Extra CSV columns are ignored.
+struct CycleRow: Codable, Identifiable {
+    var date: String
+    var cycle_count: Double?
+    var raw_mAh: Double?
+    var nominal_mAh: Double?
+    var id: String { date }
+    static let parser: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"; f.locale = Locale(identifier: "en_US_POSIX"); return f
+    }()
+    var day: Date { Self.parser.date(from: date) ?? .distantPast }
+}
+
+// Honest Genius Bar evidence, from /api/evidence. All optional (the server omits what it cannot compute).
+struct Evidence: Codable {
+    struct MacOS: Codable { var capacity: String?; var condition: String? }
+    struct Runtime: Codable { var hours: Double?; var atWatts: Double? }
+    struct Projection: Codable { var projectedAtDesign: Double?; var cyclesNow: Double? }
+    struct Shutdown: Codable, Identifiable { var at: String?; var pct: Double?; var gapMin: Double?; var id: String { at ?? UUID().uuidString } }
+    var macos: MacOS?
+    var runtime: Runtime?
+    var resistanceMohm: Double?
+    var resistanceElevated: Bool?
+    var shutdowns: [Shutdown]?
+    var projection: Projection?
+    var symptomsFound: Bool?
+    var startedTracking: String?
+}
+
 @MainActor
 final class BattCalModel: ObservableObject {
     @Published var status: EngineStatus?
     @Published var spark: [TelemetryPoint] = []
+    @Published var cycles: [CycleRow] = []
+    @Published var evidence: Evidence?
     @Published var engineLoaded = true
     @Published var reachable = true
     private var ampHistory: [Double] = []
@@ -73,6 +107,7 @@ final class BattCalModel: ObservableObject {
     private let agentPlist = ("~/Library/LaunchAgents/com.parsa.battery-calibrate.plist" as NSString).expandingTildeInPath
 
     init() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -85,6 +120,7 @@ final class BattCalModel: ObservableObject {
                 let (d, _) = try await URLSession.shared.data(from: base.appendingPathComponent("api/status"))
                 status = try JSONDecoder().decode(EngineStatus.self, from: d)
                 reachable = true
+                checkNotifications()
                 if let a = status?.amperageMa {
                     ampHistory.append(a)
                     if ampHistory.count > 5 { ampHistory.removeFirst(ampHistory.count - 5) }
@@ -97,7 +133,60 @@ final class BattCalModel: ObservableObject {
                let pts = try? JSONDecoder().decode([TelemetryPoint].self, from: d) {
                 spark = pts
             }
+            if let url = URL(string: "api/cycles", relativeTo: base),
+               let (d, _) = try? await URLSession.shared.data(from: url),
+               let rows = try? JSONDecoder().decode([CycleRow].self, from: d) {
+                cycles = rows
+            }
+            if let url = URL(string: "api/evidence", relativeTo: base),
+               let (d, _) = try? await URLSession.shared.data(from: url),
+               let ev = try? JSONDecoder().decode(Evidence.self, from: d) {
+                evidence = ev
+            }
             engineLoaded = Self.run("/bin/launchctl", ["print", "gui/\(getuid())/\(agentLabel)"]) == 0
+        }
+    }
+
+    // Native alerts on meaningful transitions. Previous values persist in UserDefaults so
+    // a restart does not re-fire. The engine already notifies on Condition changes, so this
+    // covers cycle-complete and the 80% true-health threshold.
+    private func checkNotifications() {
+        guard let s = status else { return }
+        let d = UserDefaults.standard
+        if let c = s.cycles {
+            if let last = d.object(forKey: "notif.cycles") as? Int, c > last {
+                notify(id: "cycle-\(c)", "Cycle complete", "BattCal logged cycle \(c). Cycled for the AppleCare push.")
+            }
+            d.set(c, forKey: "notif.cycles")
+        }
+        if let h = s.rawHealthPct {
+            let wasBelow = d.bool(forKey: "notif.below80")
+            let isBelow = h < 80
+            if isBelow && !wasBelow {
+                notify(id: "below80", "True health below 80%", String(format: "Raw capacity is %.1f%%, into AppleCare-replacement territory.", h))
+            }
+            d.set(isBelow, forKey: "notif.below80")
+        }
+    }
+    private func notify(id: String, _ title: String, _ body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+    }
+
+    // Genius Bar prep: kick off a calibration cycle before an appointment (POST), or end it (DELETE).
+    func prep() {
+        Task {
+            var req = URLRequest(url: base.appendingPathComponent("api/prep")); req.httpMethod = "POST"
+            _ = try? await URLSession.shared.data(for: req); refresh()
+        }
+    }
+    func endPrep() {
+        Task {
+            var req = URLRequest(url: base.appendingPathComponent("api/prep")); req.httpMethod = "DELETE"
+            _ = try? await URLSession.shared.data(for: req); refresh()
         }
     }
 
