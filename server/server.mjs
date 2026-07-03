@@ -199,10 +199,19 @@ function evidence() {
   const runtimeHrs = medW && usableWh ? +(usableWh / medW).toFixed(1) : null;
 
   // Internal resistance: slope of pack voltage (mV) vs current (mA) via least squares.
-  const pts = rows.map((r) => ({ v: Number(r.voltage_mV), i: Number(r.amperage_mA) }))
-    .filter((p) => Number.isFinite(p.v) && Number.isFinite(p.i) && p.v > 0);
+  // Fit pack voltage vs current on DISCHARGE rows only. Mixing charge + drain across the
+  // SoC sweep makes the slope track OCV-vs-SoC (current sign correlates with charge level),
+  // not the true I*R term, which can fabricate an "elevated resistance". A near-constant
+  // current then makes the denominator ~0 and yields null (an honest "cannot tell").
+  const pts = rows.filter((r) => r.state === 'drain')
+    .map((r) => ({ v: Number(r.voltage_mV), i: Number(r.amperage_mA) }))
+    .filter((p) => Number.isFinite(p.v) && Number.isFinite(p.i) && p.v > 0 && p.i < 0);
+  // A resistance fit needs many DISTINCT current levels: coarse or quantized current (only a
+  // few levels, e.g. legacy telemetry rounded to ~2048 mA) yields a slope dominated by noise,
+  // not I*R, so report null rather than a fabricated "elevated" number.
+  const levels = new Set(pts.map((p) => Math.round(p.i)));
   let resistanceMohm = null;
-  if (pts.length > 20) {
+  if (pts.length > 20 && levels.size >= 8) {
     const n2 = pts.length;
     const sx = pts.reduce((a, p) => a + p.i, 0);
     const sy = pts.reduce((a, p) => a + p.v, 0);
@@ -217,20 +226,30 @@ function evidence() {
   }
   const resistanceElevated = resistanceMohm !== null && resistanceMohm > 250; // conservative
 
-  // Unexpected shutdowns: telemetry gaps > 10 min while charge was healthy (>15%) and not paused.
+  // Unexpected shutdowns: a telemetry gap is only evidence of one if the machine LOST charge
+  // while the adapter was supposed to be ON (state charge/hold). A plugged Mac should hold or
+  // gain charge, so an unmonitored drop there is anomalous. Gaps during BattCal's own drain
+  // (on battery by design) or while paused are expected and never counted, which is what made
+  // the old heuristic misread ordinary sleeps as shutdowns.
   const shutdowns = [];
   for (let k = 1; k < rows.length; k++) {
-    const prevT = new Date(rows[k - 1].ts).getTime();
-    const curT = new Date(rows[k].ts).getTime();
-    const gapMin = (curT - prevT) / 60000;
-    if (gapMin > 10 && Number(rows[k - 1].pct) > 15 && rows[k - 1].state !== 'paused') {
-      shutdowns.push({ at: rows[k - 1].ts, pct: Number(rows[k - 1].pct), gapMin: Math.round(gapMin) });
+    const prev = rows[k - 1], cur = rows[k];
+    const gapMin = (new Date(cur.ts).getTime() - new Date(prev.ts).getTime()) / 60000;
+    const dropPct = Number(prev.pct) - Number(cur.pct);
+    const adapterOn = prev.state === 'charge' || prev.state === 'hold';
+    if (gapMin > 10 && adapterOn && Number(prev.pct) > 15 && dropPct > 5) {
+      shutdowns.push({ at: prev.ts, pct: Number(prev.pct), gapMin: Math.round(gapMin), dropPct });
     }
   }
 
   // Temperature ranges.
-  const temps = rows.map((r) => Number(r.temp_C)).filter(Number.isFinite);
-  const tRange = temps.length ? { min: Math.min(...temps), max: Math.max(...temps) } : null;
+  // Physical pack temperature is never 0; the engine writes 0.0 on a failed ioreg read, so
+  // drop those. reduce (not Math.min(...spread)) so a long telemetry file cannot overflow the
+  // call-argument limit and throw RangeError, permanently 500-ing this endpoint.
+  const temps = rows.map((r) => Number(r.temp_C)).filter((t) => Number.isFinite(t) && t > 0);
+  const tRange = temps.length
+    ? { min: temps.reduce((a, b) => Math.min(a, b), Infinity), max: temps.reduce((a, b) => Math.max(a, b), -Infinity) }
+    : null;
 
   // Degradation projection from history (macOS + raw).
   const hist = readCsv(n.cycles).filter((r) => typeof r.date === 'string');
