@@ -44,13 +44,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.eta.rawValue
         let style = LabelStyle(rawValue: raw) ?? .eta
-        if let text = model.menuLabel(for: style) {
-            button.image = nil
-            button.title = text
-        } else {
-            button.title = ""
-            button.image = NSImage(systemSymbolName: model.symbolName, accessibilityDescription: "BattCal")
-        }
+        // Always show BattCal's distinct cycle glyph so the item reads as BattCal, not a
+        // stray number next to macOS's battery. iconOnly is glyph-only; every other style
+        // adds a compact status (ETA/watts/mode), never a bare percent that duplicates macOS.
+        button.image = NSImage(systemSymbolName: model.menuBarSymbol, accessibilityDescription: "BattCal")
+        let text = (style == .iconOnly) ? nil : model.menuLabel(for: style)
+        button.title = text.map { " \($0)" } ?? ""
     }
 
     @objc private func togglePopover() {

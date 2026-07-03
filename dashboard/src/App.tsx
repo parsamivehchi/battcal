@@ -23,16 +23,46 @@ type ThemePref = (typeof THEMES)[number];
 
 const DEFAULT_BAND = { low: 10, high: 90 };
 
+type Flow = 'charging' | 'draining' | 'steady';
+
+// Actual power flow from measured battery watts (positive = charging, negative =
+// discharging). Source of truth for direction: during an idle-gate activity hold the
+// engine state is still "drain" while the adapter is re-enabled and the battery charges.
+function flowOf(s: Status | null): Flow {
+  if (!s) return 'steady';
+  if (s.batteryW != null) {
+    if (s.batteryW > 0.5) return 'charging';
+    if (s.batteryW < -0.5) return 'draining';
+    return 'steady';
+  }
+  if (s.charging) return 'charging';
+  if (s.state === 'drain') return 'draining';
+  return 'steady';
+}
+
+// Percentage the battery is heading toward, given the real flow. Charging: band.high in
+// a real charge phase, else the 100% batt limit during an activity-hold top-up.
+function flowTargetOf(s: Status | null): number | null {
+  if (!s) return null;
+  switch (flowOf(s)) {
+    case 'charging': return s.state === 'charge' ? s.band.high : 100;
+    case 'draining': return s.band.low;
+    default: return null;
+  }
+}
+
 function stateMeta(s: Status | null) {
-  const band = s?.band ?? DEFAULT_BAND;
-  const map: Record<string, { label: string; color: string; icon: string }> = {
-    drain: { label: `Draining to ${band.low}%`, color: 'var(--status-serious)', icon: '⇣' },
-    charge: { label: `Charging to ${band.high}%`, color: 'var(--status-good)', icon: '⇡' },
-    hold: { label: 'Holding at full (calibration)', color: 'var(--status-good)', icon: '✓' },
-    paused: { label: 'Paused - charging like normal', color: 'var(--series-1)', icon: '⏸' },
-    stopped: { label: 'Engine off - normal charging', color: 'var(--text-muted)', icon: '○' },
-  };
-  return map[s?.state || 'stopped'] || map.stopped;
+  // Paused / stopped come straight from state; the cycling states are driven by the real
+  // power flow so an activity hold (state "drain" but charging) reads correctly.
+  if (!s || s.state === 'stopped') return { label: 'Engine off - normal charging', color: 'var(--text-muted)', icon: '○' };
+  if (s.paused) return { label: 'Paused - charging like normal', color: 'var(--series-1)', icon: '⏸' };
+  switch (flowOf(s)) {
+    case 'charging': return { label: `Charging to ${flowTargetOf(s) ?? s.band.high}%`, color: 'var(--status-good)', icon: '⇡' };
+    case 'draining': return { label: `Draining to ${s.band.low}%`, color: 'var(--status-serious)', icon: '⇣' };
+    default: return s.state === 'hold'
+      ? { label: 'Holding at full (calibration)', color: 'var(--status-good)', icon: '✓' }
+      : { label: `Holding at ${s.pct ?? 0}%`, color: 'var(--status-good)', icon: '✓' };
+  }
 }
 
 interface Pt { t: number; pct: number; w: number; temp: number; state: string }
@@ -134,7 +164,10 @@ export default function App() {
 
   // 1s countdown clock, ticking only while a throttle banner or benchmark break is on screen.
   const [now, setNow] = useState(() => Date.now());
-  const discharging = status?.state === 'drain';
+  // Throttled only while the battery is ACTUALLY discharging (adapter cut). During an
+  // idle-gate activity hold the state is still "drain" but the adapter is re-enabled and
+  // the battery charges, so gate on real power flow, not the state label.
+  const discharging = status?.batteryW != null && status.batteryW < -0.5;
   const breakUntilMs = status?.breakUntil != null ? status.breakUntil * 1000 : null;
   const breakActive = breakUntilMs != null && breakUntilMs > now;
   useEffect(() => {
@@ -231,10 +264,13 @@ export default function App() {
   const eta = useMemo(() => {
     const s = status;
     if (!s || s.paused || !s.rawCurrentMah || !s.rawMah || !s.amperageMa || Math.abs(s.amperageMa) < 50) return null;
-    const targetPct = s.state === 'drain' ? s.band.low : s.state === 'charge' ? s.band.high : null;
+    const targetPct = flowTargetOf(s);
     if (targetPct === null) return null;
     const targetMah = (targetPct / 100) * s.rawMah;
-    const mins = ((targetMah - s.rawCurrentMah) / s.amperageMa) * 60;
+    const deltaMah = targetMah - s.rawCurrentMah;
+    // Direction sanity: the draw sign must match the heading, else it's a transition.
+    if (deltaMah * s.amperageMa <= 0) return null;
+    const mins = (deltaMah / s.amperageMa) * 60;
     if (!Number.isFinite(mins) || mins <= 0 || mins > 48 * 60) return null;
     const m = Math.round(mins);
     return { text: m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`, targetPct };

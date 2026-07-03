@@ -119,9 +119,38 @@ final class BattCalModel: ObservableObject {
         }
     }
 
-    // True while the engine has cut the adapter and the SoC runs off the battery,
-    // i.e. macOS is power-throttling the CPU (benchmarks/heavy compute score low).
-    var isDischarging: Bool { reachable && engineLoaded && status?.state == "drain" }
+    // True only while the battery is ACTUALLY discharging (adapter cut) and macOS is
+    // power-throttling the CPU. During an idle-gate activity hold the state is still
+    // "drain" but the adapter is re-enabled, so gate on real power flow, not the label.
+    var isDischarging: Bool { reachable && engineLoaded && (status?.batteryW ?? 0) < -0.5 }
+
+    // Actual power flow right now, from measured battery watts (positive = charging,
+    // negative = discharging). This is the SOURCE OF TRUTH for every readout: during an
+    // idle-gate activity hold the engine state is still "drain" while the adapter is
+    // re-enabled and the battery charges, so never infer direction from `state`.
+    enum Flow { case charging, draining, steady }
+    var flow: Flow {
+        if let w = status?.batteryW {
+            if w > 0.5 { return .charging }
+            if w < -0.5 { return .draining }
+            return .steady
+        }
+        if status?.charging == true { return .charging }
+        if status?.state == "drain" { return .draining }
+        return .steady
+    }
+
+    // The percentage the battery is currently heading toward, given the real flow.
+    // Charging: band.high during a real charge phase, else the 100% batt limit during an
+    // activity-hold top-up. Draining: the band floor. Steady: nowhere (holding).
+    var flowTarget: Int? {
+        guard let s = status else { return nil }
+        switch flow {
+        case .charging: return s.state == "charge" ? s.band.high : 100
+        case .draining: return s.band.low
+        case .steady:   return nil
+        }
+    }
 
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
@@ -200,12 +229,13 @@ final class BattCalModel: ObservableObject {
         return p.terminationStatus
     }
 
-    // Menu bar glyph: battery level + state overlays.
+    // Popover header battery glyph: battery level + state overlays. (Fine to look like a
+    // battery here; it sits next to the big % inside the popover.)
     var symbolName: String {
         guard reachable, let s = status, let pct = s.pct else { return "battery.slash" }
         if !engineLoaded { return "battery.100percent" }
         if s.paused { return "pause.circle" }
-        if s.charging || s.state == "charge" { return "battery.100percent.bolt" }
+        if flow == .charging { return "battery.100percent.bolt" }
         switch pct {
         case ..<13: return "battery.0percent"
         case ..<38: return "battery.25percent"
@@ -215,29 +245,36 @@ final class BattCalModel: ObservableObject {
         }
     }
 
+    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. A cycle-arrows glyph
+    // marks the item as BattCal (a band cycler), never a second battery/percent readout.
+    var menuBarSymbol: String {
+        guard reachable else { return "exclamationmark.triangle" }
+        if !engineLoaded || status?.paused == true { return "pause.circle" }
+        return "arrow.triangle.2.circlepath"
+    }
+
     var titleText: String {
         guard reachable, let pct = status?.pct else { return "--" }
         return "\(pct)%"
     }
 
-    // Estimated minutes until the battery reaches the active band edge.
-    // Gauge math (like the OS): remaining mAh to target / current draw, where
-    // the draw is a short median so a momentary spike does not whipsaw the ETA.
+    // Estimated minutes until the battery reaches where it is heading, in the ACTUAL
+    // direction of flow (not the engine state). Gauge math like the OS: remaining mAh to
+    // target / current draw, draw = a short median so a momentary spike does not whipsaw.
     var minutesToTarget: (mins: Int, target: Int)? {
         guard reachable, engineLoaded, let s = status, !s.paused,
-              let cur = s.rawCurrentMah, let max = s.rawMah, max > 0 else { return nil }
+              let cur = s.rawCurrentMah, let max = s.rawMah, max > 0,
+              let target = flowTarget else { return nil }
         let amps = ampHistory.sorted()
         guard !amps.isEmpty else { return nil }
         let amp = amps[amps.count / 2]
         guard abs(amp) > 50 else { return nil }
-        let target: Int
-        switch s.state {
-        case "drain": target = s.band.low
-        case "charge": target = s.band.high
-        default: return nil
-        }
         let targetMah = Double(target) / 100 * max
-        let mins = (targetMah - cur) / amp * 60
+        let deltaMah = targetMah - cur
+        // Direction sanity: the draw sign must match the heading (charging up = amp>0 &
+        // delta>0; draining down = amp<0 & delta<0). Otherwise it is a transition; bail.
+        guard deltaMah * amp > 0 else { return nil }
+        let mins = deltaMah / amp * 60
         guard mins.isFinite, mins > 0, mins < 48 * 60 else { return nil }
         return (Int(mins), target)
     }
@@ -260,7 +297,9 @@ final class BattCalModel: ObservableObject {
             switch style {
             case .iconOnly: return nil
             case .percent: return titleText
-            case .eta: return etaText ?? titleText
+            // ETA when we can compute it, else compact watts. NEVER the bare percent
+            // (macOS already shows that); nil here makes the menu bar show the glyph alone.
+            case .eta: return etaText ?? status?.batteryW.map { String(format: "%+.0fW", $0) }
             case .power: return status?.batteryW.map { String(format: "%+.1fW", $0) } ?? titleText
             case .health: return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
             }
@@ -272,21 +311,21 @@ final class BattCalModel: ObservableObject {
         guard let s = status else { return "Reading battery…" }
         if !engineLoaded { return "Off \u{2013} charging like normal" }
         if s.paused { return "Normal charging (Apple default)" }
-        switch s.state {
-        case "drain": return "Draining to \(s.band.low)%"
-        case "charge": return "Charging to \(s.band.high)%"
-        case "hold": return "Holding at full (calibration)"
-        default: return s.state
+        switch flow {
+        case .charging: return "Charging to \(flowTarget ?? s.band.high)%"
+        case .draining: return "Draining to \(s.band.low)%"
+        case .steady:
+            if s.state == "hold" { return "Holding at full (calibration)" }
+            return "Holding at \(s.pct ?? 0)%"
         }
     }
 
     var stateColor: Color {
         guard reachable, let s = status, engineLoaded else { return .secondary }
         if s.paused { return .blue }
-        switch s.state {
-        case "drain": return .orange
-        case "charge", "hold": return .green
-        default: return .secondary
+        switch flow {
+        case .draining: return .orange
+        case .charging, .steady: return .green
         }
     }
 }

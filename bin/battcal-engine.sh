@@ -11,7 +11,10 @@
 #              Full-range passes that re-train the gauge and powerd health.
 #
 # Cycling only runs while a charger is physically attached; unplug and the Mac
-# behaves like a normal Mac until AC returns.
+# behaves like a normal Mac until AC returns. The drain phase is also gated on the
+# Mac being idle: it only discharges when there has been no keyboard/trackpad input
+# for IDLE_THRESHOLD seconds and the 1-min load average is below LOAD_THRESHOLD, so
+# active work and heavy compute always run at full plugged-in performance.
 #
 # Mode file:  /var/tmp/battcal.mode   (longevity when absent)
 # Pause:      touch /var/tmp/battcal.pause   (instant normal charging)
@@ -25,7 +28,7 @@
 # Telemetry:  ~/Library/Logs/battcal-telemetry.csv (one row per poll)
 #
 # Config (optional): ~/.battcal/config may override POLL, HOLD_SECS,
-# LONGEVITY_LOW, LONGEVITY_HIGH, CALIBRATION_LOW, BATT.
+# LONGEVITY_LOW, LONGEVITY_HIGH, CALIBRATION_LOW, BATT, IDLE_THRESHOLD, LOAD_THRESHOLD.
 
 BATT=/opt/homebrew/bin/batt
 STATE_FILE=/var/tmp/battcal.state
@@ -42,6 +45,8 @@ HOLD_SECS=3600    # calibration only: hold at 100% this long
 LONGEVITY_LOW=10  # longevity band
 LONGEVITY_HIGH=90
 CALIBRATION_LOW=5
+IDLE_THRESHOLD=${IDLE_THRESHOLD:-300}   # seconds of zero HID input before we count as "away"
+LOAD_THRESHOLD=${LOAD_THRESHOLD:-4.0}   # 1-min load average at/above this = "busy" (keep full power)
 
 # shellcheck source=/dev/null
 [ -f "$HOME/.battcal/config" ] && . "$HOME/.battcal/config"
@@ -82,6 +87,22 @@ is_charging() { pmset -g batt | grep -q '; charging;'; }
 # software-cut, but AdapterDetails keeps the real charger info (Watts>0) either way.
 plugged() {
   ioreg -rn AppleSmartBattery | grep '"AdapterDetails"' | grep -qE '"Watts"=[1-9]'
+}
+
+# Seconds since the last keyboard/trackpad/mouse input (HID idle time).
+hid_idle_secs() {
+  ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}'
+}
+
+# True (0) when the user is actively working OR the CPU is under load, i.e. we must
+# keep the adapter enabled for full performance rather than discharge for a cycle.
+user_busy() {
+  local idle load
+  idle=$(hid_idle_secs); idle=${idle:-0}
+  [ "$idle" -lt "$IDLE_THRESHOLD" ] && return 0
+  load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'); load=${load:-0}
+  awk "BEGIN{exit !($load+0 >= $LOAD_THRESHOLD)}" && return 0
+  return 1
 }
 
 start_caffeinate() {
@@ -170,7 +191,7 @@ if [ ! -f "$PAUSE_FILE" ]; then
   esac
 fi
 
-AWAITING_AC=0
+DRAIN_PAUSED=0   # 1 while we hand power back mid-drain (user active or charger unplugged)
 
 while true; do
   # User pause switch. Empty file = indefinite pause (normal charging). A numeric
@@ -227,35 +248,44 @@ while true; do
         log "reached ${P}% - switching to CHARGE (mode=$MODE, target ${HIGH}%)"
         "$BATT" adapter enable >>"$LOG" 2>&1
         stop_caffeinate
-        AWAITING_AC=0
+        DRAIN_PAUSED=0
         echo charge > "$STATE_FILE"
-      elif ! plugged; then
-        # Charger physically unplugged: cycling only runs on AC. Hand charging
-        # back (so any charger works instantly) and let the Mac behave normally.
-        if [ "$AWAITING_AC" -eq 0 ]; then
-          log "charger unplugged at ${P}% - cycling idle until AC returns"
-          "$BATT" adapter enable >>"$LOG" 2>&1
-          led enable
-          stop_caffeinate
-          AWAITING_AC=1
-        fi
       else
-        if [ "$AWAITING_AC" -eq 1 ]; then
-          log "charger back at ${P}% - resuming drain"
-          AWAITING_AC=0
-          "$BATT" adapter disable >>"$LOG" 2>&1
+        # Only discharge when plugged in AND the user is idle AND the CPU is not
+        # busy, so active work and heavy compute always run on full plugged-in
+        # performance (the adapter stays enabled). Discharge resumes once idle.
+        reason=""
+        if ! plugged; then reason="charger unplugged"
+        elif user_busy;  then reason="active/high-load"
         fi
-        start_caffeinate
-        if [ "$MODE" = "longevity" ]; then
-          led always-off
+        if [ -n "$reason" ]; then
+          # Not allowed to drain: hand power back (full performance), hold the drain.
+          if [ "$DRAIN_PAUSED" -eq 0 ]; then
+            log "drain paused at ${P}% ($reason) - adapter enabled, full performance"
+            "$BATT" adapter enable >>"$LOG" 2>&1
+            led enable
+            stop_caffeinate
+            DRAIN_PAUSED=1
+          fi
         else
-          # calibration heartbeat: alternate dark/green once per poll
-          if [ "${LED_PULSE:-0}" -eq 0 ]; then led always-off; LED_PULSE=1; else led enable; LED_PULSE=0; fi
-        fi
-        # If something re-enabled charging (batt daemon restart etc.), reassert the cut
-        if is_charging; then
-          log "charging detected during drain at ${P}% - reasserting adapter disable"
-          "$BATT" adapter disable >>"$LOG" 2>&1
+          # Allowed to drain: cut the adapter and discharge.
+          if [ "$DRAIN_PAUSED" -eq 1 ]; then
+            log "idle again at ${P}% - resuming drain (adapter cut)"
+            "$BATT" adapter disable >>"$LOG" 2>&1
+            DRAIN_PAUSED=0
+          fi
+          start_caffeinate
+          if [ "$MODE" = "longevity" ]; then
+            led always-off
+          else
+            # calibration heartbeat: alternate dark/green once per poll
+            if [ "${LED_PULSE:-0}" -eq 0 ]; then led always-off; LED_PULSE=1; else led enable; LED_PULSE=0; fi
+          fi
+          # If something re-enabled charging (batt daemon restart etc.), reassert the cut
+          if is_charging; then
+            log "charging detected during drain at ${P}% - reasserting adapter disable"
+            "$BATT" adapter disable >>"$LOG" 2>&1
+          fi
         fi
       fi
       ;;
