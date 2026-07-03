@@ -71,18 +71,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showMainWindow() {
         if popover.isShown { popover.performClose(nil) }
         if mainWindow == nil {
-            let hosting = NSHostingController(rootView: MainWindowView(model: model))
+            // The window is simply the menu bar popover, made persistent. Same view, same
+            // look; a translucent vibrant backing so it matches the popover material.
+            let content = PopoverView(model: model, inWindow: true)
+                .background(VisualEffectView().ignoresSafeArea())
+            let hosting = NSHostingController(rootView: content)
             let w = NSWindow(contentViewController: hosting)
             w.title = "BattCal"
             // Translucent, unified title bar (traffic lights float over the vibrant content).
-            w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            w.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isMovableByWindowBackground = true
             w.isOpaque = false
             w.backgroundColor = .clear
-            w.setContentSize(NSSize(width: 720, height: 600))
             w.isReleasedWhenClosed = false
+            hosting.view.layoutSubtreeIfNeeded()
+            w.setContentSize(hosting.view.fittingSize)   // fit the popover exactly, no dead space
             positionNearStatusItem(w)
             mainWindow = w
         }

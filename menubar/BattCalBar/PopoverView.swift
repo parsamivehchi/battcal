@@ -4,6 +4,7 @@ import ServiceManagement
 struct PopoverView: View {
     @ObservedObject var model: BattCalModel
     var onPopOut: () -> Void = {}
+    var inWindow: Bool = false   // true when hosted in the standalone window (no pop-out button)
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.eta.rawValue
 
@@ -32,11 +33,13 @@ struct PopoverView: View {
                     .padding(.leading, 2)
                 }
                 Spacer()
-                Button(action: onPopOut) {
-                    Image(systemName: "macwindow").font(.title3).foregroundStyle(.secondary)
+                if !inWindow {
+                    Button(action: onPopOut) {
+                        Image(systemName: "macwindow").font(.title3).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open the BattCal window")
                 }
-                .buttonStyle(.plain)
-                .help("Open the BattCal window")
             }
 
             // Throttle warning while draining, or a live countdown during a break.
