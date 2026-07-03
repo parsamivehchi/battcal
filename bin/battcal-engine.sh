@@ -11,10 +11,10 @@
 #              Full-range passes that re-train the gauge and powerd health.
 #
 # Cycling only runs while a charger is physically attached; unplug and the Mac
-# behaves like a normal Mac until AC returns. The drain phase is also gated on the
-# Mac being idle: it only discharges when there has been no keyboard/trackpad input
-# for IDLE_THRESHOLD seconds and the 1-min load average is below LOAD_THRESHOLD, so
-# active work and heavy compute always run at full plugged-in performance.
+# behaves like a normal Mac until AC returns. The drain phase is gated on CPU load: it
+# discharges in every light or idle case (whether you are here or away) and holds the
+# adapter (full performance) only while a heavy job pegs the CPU past LOAD_THRESHOLD,
+# the sole case where running on battery would actually throttle Apple Silicon.
 #
 # Mode file:  /var/tmp/battcal.mode   (longevity when absent)
 # Pause:      touch /var/tmp/battcal.pause   (instant normal charging)
@@ -28,7 +28,7 @@
 # Telemetry:  ~/Library/Logs/battcal-telemetry.csv (one row per poll)
 #
 # Config (optional): ~/.battcal/config may override POLL, HOLD_SECS,
-# LONGEVITY_LOW, LONGEVITY_HIGH, CALIBRATION_LOW, BATT, IDLE_THRESHOLD, LOAD_THRESHOLD.
+# LONGEVITY_LOW, LONGEVITY_HIGH, CALIBRATION_LOW, BATT, LOAD_THRESHOLD.
 
 BATT=/opt/homebrew/bin/batt
 STATE_FILE=/var/tmp/battcal.state
@@ -40,13 +40,13 @@ CAFF_PID_FILE=/var/tmp/battcal.caffeinate.pid
 LOG="$HOME/Library/Logs/battcal.log"
 CSV="$HOME/Library/Logs/battcal-history.csv"
 TELEMETRY="$HOME/Library/Logs/battcal-telemetry.csv"
-POLL=30           # seconds between checks
+POLL=15           # seconds between checks (short = fast full-power handback when you return)
 HOLD_SECS=3600    # calibration only: hold at 100% this long
 LONGEVITY_LOW=10  # longevity band
 LONGEVITY_HIGH=90
 CALIBRATION_LOW=5
-IDLE_THRESHOLD=${IDLE_THRESHOLD:-300}   # seconds of zero HID input before we count as "away"
-LOAD_THRESHOLD=${LOAD_THRESHOLD:-4.0}   # 1-min load average at/above this = "busy" (keep full power)
+LOAD_THRESHOLD=${LOAD_THRESHOLD:-8.0}   # 1-min load avg that counts as "CPU genuinely pegged"
+                                        # (12-core box; idle baseline ~4.5, a real all-core job hits 12-20)
 
 # shellcheck source=/dev/null
 [ -f "$HOME/.battcal/config" ] && . "$HOME/.battcal/config"
@@ -89,20 +89,14 @@ plugged() {
   ioreg -rn AppleSmartBattery | grep '"AdapterDetails"' | grep -qE '"Watts"=[1-9]'
 }
 
-# Seconds since the last keyboard/trackpad/mouse input (HID idle time).
-hid_idle_secs() {
-  ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}'
-}
-
-# True (0) when the user is actively working OR the CPU is under load, i.e. we must
-# keep the adapter enabled for full performance rather than discharge for a cycle.
+# Hold the adapter (full plugged-in performance) ONLY when the CPU is genuinely pegged by
+# a heavy sustained job - the sole case where running on battery would actually throttle
+# you on Apple Silicon. Every lighter case (idle, light work, whether you are here or
+# away) drains, to cycle the battery as much as safely possible for the AppleCare goal.
 user_busy() {
-  local idle load
-  idle=$(hid_idle_secs); idle=${idle:-0}
-  [ "$idle" -lt "$IDLE_THRESHOLD" ] && return 0
+  local load
   load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'); load=${load:-0}
-  awk "BEGIN{exit !($load+0 >= $LOAD_THRESHOLD)}" && return 0
-  return 1
+  awk "BEGIN{exit !($load+0 >= $LOAD_THRESHOLD)}"
 }
 
 start_caffeinate() {
@@ -240,7 +234,10 @@ while true; do
   if [ -z "$P" ]; then sleep "$POLL"; continue; fi
 
   log_telemetry "$STATE" "$P"
-  check_condition
+  # check_condition spawns system_profiler (~1-2s), so throttle it to ~every 60s rather
+  # than every poll now that the poll is a snappy 15s (activity response stays fast).
+  TICK=$(( (${TICK:-0} + 1) % 4 ))
+  [ "$TICK" -eq 0 ] && check_condition
 
   case "$STATE" in
     drain)
@@ -256,7 +253,7 @@ while true; do
         # performance (the adapter stays enabled). Discharge resumes once idle.
         reason=""
         if ! plugged; then reason="charger unplugged"
-        elif user_busy;  then reason="active/high-load"
+        elif user_busy;  then reason="CPU pegged (heavy job)"
         fi
         if [ -n "$reason" ]; then
           # Not allowed to drain: hand power back (full performance), hold the drain.
