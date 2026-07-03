@@ -47,6 +47,8 @@ LONGEVITY_HIGH=90
 CALIBRATION_LOW=5
 LOAD_THRESHOLD=${LOAD_THRESHOLD:-8.0}   # 1-min load avg that counts as "CPU genuinely pegged"
                                         # (12-core box; idle baseline ~4.5, a real all-core job hits 12-20)
+LOAD_RESUME=${LOAD_RESUME:-6.0}         # resume drain only after load falls BELOW this (deadband under THRESHOLD)
+RESUME_DEBOUNCE=${RESUME_DEBOUNCE:-3}   # ...held for this many consecutive polls (~45s at the 15s poll)
 
 # shellcheck source=/dev/null
 [ -f "$HOME/.battcal/config" ] && . "$HOME/.battcal/config"
@@ -186,6 +188,7 @@ if [ ! -f "$PAUSE_FILE" ]; then
 fi
 
 DRAIN_PAUSED=0   # 1 while we hand power back mid-drain (user active or charger unplugged)
+IDLE_STREAK=0    # consecutive low-load polls while paused; drives the resume debounce
 
 while true; do
   # User pause switch. Empty file = indefinite pause (normal charging). A numeric
@@ -251,9 +254,22 @@ while true; do
         # Only discharge when plugged in AND the user is idle AND the CPU is not
         # busy, so active work and heavy compute always run on full plugged-in
         # performance (the adapter stays enabled). Discharge resumes once idle.
+        # Load hysteresis: pause FAST (user_busy: load >= THRESHOLD), resume SLOW - only
+        # after load falls below LOAD_RESUME for RESUME_DEBOUNCE consecutive polls. The
+        # deadband + debounce stop the adapter/LED from flapping when load straddles the
+        # threshold during bursty work. The protective (pause) side stays one-poll immediate.
+        if [ "$DRAIN_PAUSED" -eq 1 ]; then
+          load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'); load=${load:-0}
+          if awk "BEGIN{exit !($load+0 < $LOAD_RESUME)}"; then IDLE_STREAK=$(( IDLE_STREAK + 1 ))
+          else IDLE_STREAK=0; fi
+          [ "$IDLE_STREAK" -ge "$RESUME_DEBOUNCE" ] && load_hold=0 || load_hold=1
+        else
+          IDLE_STREAK=0
+          if user_busy; then load_hold=1; else load_hold=0; fi
+        fi
         reason=""
         if ! plugged; then reason="charger unplugged"
-        elif user_busy;  then reason="CPU pegged (heavy job)"
+        elif [ "$load_hold" -eq 1 ]; then reason="CPU pegged (heavy job)"
         fi
         if [ -n "$reason" ]; then
           # Not allowed to drain: hand power back (full performance), hold the drain.
