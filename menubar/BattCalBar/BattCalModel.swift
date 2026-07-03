@@ -191,6 +191,18 @@ final class BattCalModel: ObservableObject {
         }
     }
 
+    // Directional battery power for the menu bar: IN when charging, OUT when draining.
+    // batteryW is +ve charging / -ve draining, so flow + magnitude give an unambiguous
+    // in/out reading in EVERY mode (including normal), which the old mode word hid.
+    var powerLabel: String? {
+        guard let w = status?.batteryW else { return nil }
+        switch flow {
+        case .charging: return String(format: "IN %.1fW", abs(w))
+        case .draining: return String(format: "OUT %.1fW", abs(w))
+        case .steady:   return String(format: "%.1fW", abs(w))
+        }
+    }
+
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
 
@@ -329,19 +341,17 @@ final class BattCalModel: ObservableObject {
     func menuLabel(for style: LabelStyle) -> String? {
         if style == .iconOnly { return nil }
         guard reachable else { return "\u{2014}" }
-        switch activeMode {
-        case .off: return "off"
-        case .normal: return "normal"
-        case .longevity, .calibration:
-            switch style {
-            case .iconOnly: return nil
-            case .percent: return titleText
-            // ETA when we can compute it, else compact watts. NEVER the bare percent
-            // (macOS already shows that); nil here makes the menu bar show the glyph alone.
-            case .eta: return etaText ?? status?.batteryW.map { String(format: "%+.0fW", $0) }
-            case .power: return status?.batteryW.map { String(format: "%+.1fW", $0) } ?? titleText
-            case .health: return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
-            }
+        if activeMode == .off { return "off" }      // engine stopped: nothing live to show
+        switch style {
+        case .iconOnly: return nil
+        // Directional watts in EVERY mode. This is what "Power (W)" now means, including
+        // normal mode where the label used to be a static "normal" that ignored the picker.
+        case .power:   return powerLabel ?? titleText
+        // Time-to-target when cycling; otherwise the same directional watts (never a bare
+        // percent, which macOS already shows).
+        case .eta:     return etaText ?? powerLabel ?? titleText
+        case .percent: return titleText
+        case .health:  return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
         }
     }
 
