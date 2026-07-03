@@ -35,6 +35,11 @@ struct EngineStatus: Codable {
     var rawHealthPct: Double?
     var appleHealth: String?
     var cycles: Int?
+    var designMah: Double?
+    var nominalMah: Double?
+    var nominalHealthPct: Double?
+    var designCycles: Int?
+    var condition: String?
 
     struct Band: Codable { var low: Int; var high: Int }
 }
