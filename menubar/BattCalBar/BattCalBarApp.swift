@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let w = NSWindow(contentViewController: hosting)
             w.title = "BattCal"
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            w.setContentSize(NSSize(width: 420, height: 640))
+            w.setContentSize(NSSize(width: 360, height: 512))
             w.isReleasedWhenClosed = false
             w.center()
             mainWindow = w

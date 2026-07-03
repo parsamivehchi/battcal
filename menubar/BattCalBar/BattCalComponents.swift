@@ -37,16 +37,16 @@ struct MeterBar: View {
     var tint: Color = .green
     var marker: Double? = nil   // 0...1 position of a reference line
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(label).font(.subheadline.weight(.semibold))
+                Text(label).font(.footnote.weight(.semibold))
                 Spacer()
-                Text(valueText).font(.subheadline.weight(.semibold)).monospacedDigit()
+                Text(valueText).font(.footnote.weight(.semibold)).monospacedDigit()
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.10))
-                    RoundedRectangle(cornerRadius: 5).fill(tint)
+                    RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.10))
+                    RoundedRectangle(cornerRadius: 4).fill(tint)
                         .frame(width: max(0, min(1, fraction)) * geo.size.width)
                     if let m = marker {
                         Rectangle().fill(Color.red.opacity(0.75)).frame(width: 1.5)
@@ -54,7 +54,7 @@ struct MeterBar: View {
                     }
                 }
             }
-            .frame(height: 10)
+            .frame(height: 7)
         }
     }
 }
