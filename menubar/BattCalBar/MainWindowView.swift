@@ -1,8 +1,8 @@
 import SwiftUI
 
 // The standalone, resizable window (opened from the popover's pop-out button or by
-// clicking the Dock icon). Tabbed like coconutBattery, with a wide Liquid Glass layout
-// that shows everything at once - no scrolling or resizing needed.
+// clicking the Dock icon). Tabbed, translucent, built from native SwiftUI components
+// (Gauge / GroupBox / LabeledContent / glass buttons) so it reads as a first-party app.
 struct MainWindowView: View {
     @ObservedObject var model: BattCalModel
     @State private var tab = 0
@@ -21,47 +21,58 @@ struct MainWindowView: View {
     }
 }
 
-// The main glance tab: a wide two-column dashboard that fits without scrolling.
+// The main glance tab: a wide two-column dashboard of native components.
 struct ThisMacTab: View {
     @ObservedObject var model: BattCalModel
     private var s: EngineStatus? { model.status }
 
     var body: some View {
         ScrollView {
-            GlassStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 12) {
-                    header
+            VStack(alignment: .leading, spacing: 14) {
+                header
 
-                    if model.isDischarging || model.breakUntil != nil {
-                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                            PowerBanner(model: model, now: ctx.date)
-                        }
+                if model.isDischarging || model.breakUntil != nil {
+                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                        PowerBanner(model: model, now: ctx.date)
                     }
-
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(spacing: 12) {
-                            GlassCard { meters }
-                            GlassCard { actions }
-                            GlassCard { modeCard }
-                        }
-                        VStack(spacing: 12) {
-                            GlassCard { chartCard }
-                            GlassCard { statGrid }
-                        }
-                    }
-
-                    footer
                 }
-                .padding(16)
+
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(spacing: 14) {
+                        GroupBox { meters }
+                        GroupBox(label: sectionLabel("Quick Actions")) { actions.padding(.top, 4) }
+                        GroupBox(label: sectionLabel("Mode")) { ModeSelector(model: model).padding(.top, 4) }
+                    }
+                    VStack(spacing: 14) {
+                        GroupBox(label: sectionLabel("Last 3 Hours")) { chart.padding(.top, 4) }
+                        GroupBox(label: sectionLabel("Battery")) { statList.padding(.top, 4) }
+                    }
+                }
+
+                footer
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // MARK: hero header
+    private func sectionLabel(_ t: String) -> some View {
+        Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+    }
+
+    // MARK: hero header - native circular Gauge
 
     private var header: some View {
-        HStack(spacing: 14) {
-            chargeRing
+        HStack(spacing: 16) {
+            Gauge(value: Double(min(100, max(0, s?.pct ?? 0))), in: 0...100) {
+            } currentValueLabel: {
+                Text("\(s?.pct ?? 0)").font(.system(.title2, design: .rounded).weight(.bold)).monospacedDigit()
+            }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .tint(model.stateColor)
+            .scaleEffect(1.6)
+            .frame(width: 76, height: 76)
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Circle().fill(model.stateColor).frame(width: 9, height: 9)
@@ -72,60 +83,53 @@ struct ThisMacTab: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 2)
-    }
-
-    private var chargeRing: some View {
-        ZStack {
-            Circle().stroke(Color.primary.opacity(0.12), lineWidth: 6)
-            Circle()
-                .trim(from: 0, to: CGFloat(min(100, max(0, s?.pct ?? 0))) / 100)
-                .stroke(model.stateColor, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Text(s?.pct.map { "\($0)" } ?? "--")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .monospacedDigit()
-        }
-        .frame(width: 68, height: 68)
+        .padding(.horizontal, 4)
     }
 
     // MARK: left column
 
     private var meters: some View {
-        VStack(spacing: 11) {
-            MeterBar(label: "Battery charge",
-                     valueText: s?.pct.map { "\($0)%" } ?? "--",
-                     fraction: Double(s?.pct ?? 0) / 100,
-                     tint: model.stateColor)
-            MeterBar(label: "Battery health (true)",
-                     valueText: s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--",
-                     fraction: (s?.rawHealthPct ?? 0) / 100,
-                     tint: (s?.rawHealthPct ?? 100) >= 80 ? .green : .orange,
-                     marker: 0.80)
+        VStack(spacing: 12) {
+            Gauge(value: Double(min(100, max(0, s?.pct ?? 0))), in: 0...100) {
+                Text("Charge")
+            } currentValueLabel: {
+                Text("\(s?.pct ?? 0)%").monospacedDigit()
+            }
+            .gaugeStyle(.accessoryLinearCapacity)
+            .tint(model.stateColor)
+
+            Gauge(value: min(100, max(0, s?.rawHealthPct ?? 0)), in: 0...100) {
+                Text("Health")
+            } currentValueLabel: {
+                Text(s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--").monospacedDigit()
+            }
+            .gaugeStyle(.accessoryLinearCapacity)
+            .tint((s?.rawHealthPct ?? 100) >= 80 ? .green : .orange)
         }
+        .padding(.vertical, 2)
     }
 
     private var actions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(text: "QUICK ACTIONS")
-            GlassActionButton(title: "Charge to 100% now", icon: "bolt.fill", tint: .blue, enabled: model.reachable) { model.select(.normal) }
-            GlassActionButton(title: "Deep calibrate now", icon: "gauge.with.needle", tint: .orange, enabled: model.reachable) { model.select(.calibration) }
-            GlassActionButton(title: "Benchmark break (30 min)", icon: "speedometer", tint: .green, enabled: model.reachable) { model.benchmarkBreak(minutes: 30) }
+        VStack(spacing: 8) {
+            actionButton("Charge to 100% now", "bolt.fill", .blue) { model.select(.normal) }
+            actionButton("Deep calibrate now", "gauge.with.needle", .orange) { model.select(.calibration) }
+            actionButton("Benchmark break", "speedometer", .green) { model.benchmarkBreak(minutes: 30) }
         }
     }
 
-    private var modeCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(text: "MODE")
-            ModeSelector(model: model)
+    private func actionButton(_ title: String, _ icon: String, _ tint: Color, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Label(title, systemImage: icon).frame(maxWidth: .infinity, alignment: .leading)
         }
+        .glassButtonStyle(tint: tint)
+        .controlSize(.large)
+        .disabled(!model.reachable)
     }
 
     // MARK: right column
 
-    private var chartCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(text: "LAST 3 HOURS")
+    private var chart: some View {
+        Group {
             if model.spark.isEmpty {
                 Text("collecting telemetry...").font(.caption).foregroundStyle(.secondary).frame(height: 150)
             } else {
@@ -134,52 +138,34 @@ struct ThisMacTab: View {
         }
     }
 
-    private var statGrid: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 13) {
+    private var statList: some View {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
             GridRow {
-                cell("battery.100percent", "Full charge", s?.rawMah.map { String(format: "%.0f mAh", $0) } ?? "--")
-                cell("square.dashed", "Design", s?.designMah.map { String(format: "%.0f mAh", $0) } ?? "--")
+                LabeledContent("Full charge", value: s?.rawMah.map { String(format: "%.0f mAh", $0) } ?? "--")
+                LabeledContent("Design", value: s?.designMah.map { String(format: "%.0f mAh", $0) } ?? "--")
             }
             GridRow {
-                cell("arrow.triangle.2.circlepath", "Cycles", "\(s?.cycles ?? 0)" + (s?.designCycles.map { " / \($0)" } ?? ""))
-                cell("thermometer.medium", "Temp", s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
+                LabeledContent("Cycles", value: "\(s?.cycles ?? 0)" + (s?.designCycles.map { " / \($0)" } ?? ""))
+                LabeledContent("Temp", value: s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
             }
             GridRow {
-                cell("bolt.fill", "Power", s?.batteryW.map { String(format: "%+.1f W", $0) } ?? "--")
-                cell("powerplug.fill", "Adapter", s?.plugged == true ? "\(s?.adapterW ?? 0) W" : "on battery")
+                LabeledContent("Power", value: s?.batteryW.map { String(format: "%+.1f W", $0) } ?? "--")
+                LabeledContent("Adapter", value: s?.plugged == true ? "\(s?.adapterW ?? 0) W" : "battery")
             }
             GridRow {
-                cell("heart.fill", "Apple health", s?.appleHealth ?? "--")
-                cell("checkmark.seal.fill", "Condition", s?.condition ?? "--")
+                LabeledContent("Apple health", value: s?.appleHealth ?? "--")
+                LabeledContent("Condition", value: s?.condition ?? "--")
             }
         }
-    }
-
-    private func cell(_ icon: String, _ label: String, _ value: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label.uppercased()).font(.system(size: 8.5, weight: .semibold)).foregroundStyle(.secondary)
-                Text(value).font(.system(.callout, design: .rounded).weight(.semibold)).monospacedDigit()
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .labeledContentStyle(.stat)
+        .padding(.vertical, 2)
     }
 
     // MARK: footer
 
     private var footer: some View {
         Button { model.openDashboard() } label: {
-            HStack {
-                Image(systemName: "chart.xyaxis.line")
-                Text("Open web dashboard").fontWeight(.semibold)
-                Spacer()
-                Image(systemName: "arrow.up.forward").font(.caption)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 3)
-            .contentShape(Rectangle())
+            Label("Open web dashboard", systemImage: "safari").frame(maxWidth: .infinity)
         }
         .glassButtonStyle(prominent: true, tint: .accentColor)
         .controlSize(.large)
@@ -194,4 +180,20 @@ struct ThisMacTab: View {
         }
         return parts.joined(separator: "  \u{00B7}  ")
     }
+}
+
+// Compact vertical LabeledContent (label above value) for dense stat grids.
+struct StatLabeledContentStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            configuration.label
+                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            configuration.content
+                .font(.system(.callout, design: .rounded).weight(.semibold)).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+extension LabeledContentStyle where Self == StatLabeledContentStyle {
+    static var stat: StatLabeledContentStyle { StatLabeledContentStyle() }
 }
