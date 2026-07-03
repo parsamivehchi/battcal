@@ -1,44 +1,14 @@
 import SwiftUI
 import Charts
 
-// A compact icon stat cell shared by the window tabs.
-struct StatCell: View {
-    let icon: String
-    let label: String
-    let value: String
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label.uppercased()).font(.system(size: 8.5, weight: .semibold)).foregroundStyle(.secondary)
-                Text(value).font(.system(.callout, design: .rounded).weight(.semibold)).monospacedDigit()
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+struct HealthPoint: Identifiable {
+    let date: Date
+    let health: Double
+    var id: Date { date }
 }
 
-// A label / value row for the Genius Bar evidence card.
-struct KeyValueRow: View {
-    let label: String
-    let value: String
-    var tint: Color = .primary
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(label).font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-                Text(value).font(.system(.subheadline, design: .rounded).weight(.semibold)).monospacedDigit().foregroundStyle(tint)
-            }
-            .padding(.vertical, 6)
-            Divider().opacity(0.4)
-        }
-    }
-}
-
-// History: true-health-per-cycle trend + impact-since-BattCal-started.
-struct HistoryTab: View {
+// History: true-health-per-cycle trend + impact-since-BattCal-started, as a native Form.
+struct HistoryPane: View {
     @ObservedObject var model: BattCalModel
     private var design: Double { model.status?.designMah ?? 6075 }
     private var points: [HealthPoint] {
@@ -49,43 +19,26 @@ struct HistoryTab: View {
     }
 
     var body: some View {
-        ScrollView {
-            GlassStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 12) {
-                    GlassCard {
-                        VStack(alignment: .leading, spacing: 8) {
-                            SectionLabel(text: "TRUE HEALTH PER CYCLE")
-                            if points.count < 2 {
-                                Text("Not enough cycles logged yet. Health snapshots accumulate as BattCal completes 10-90 passes.")
-                                    .font(.caption).foregroundStyle(.secondary).frame(height: 160, alignment: .center)
-                                    .frame(maxWidth: .infinity)
-                            } else {
-                                chart
-                            }
-                        }
-                    }
-                    GlassCard {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SectionLabel(text: "IMPACT SINCE BATTCAL STARTED")
-                            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 13) {
-                                GridRow {
-                                    StatCell(icon: "arrow.triangle.2.circlepath", label: "Cycles",
-                                             value: "\(model.status?.cycles ?? 0)" + (model.status?.designCycles.map { " / \($0)" } ?? ""))
-                                    StatCell(icon: "speedometer", label: "Pace", value: pace)
-                                }
-                                GridRow {
-                                    StatCell(icon: "heart.fill", label: "True health now",
-                                             value: model.status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
-                                    StatCell(icon: "arrow.up.arrow.down", label: "Change since start", value: change)
-                                }
-                            }
-                        }
-                    }
-                    dashboardButton(model)
+        Form {
+            Section("True Health Per Cycle") {
+                if points.count < 2 {
+                    Text("Not enough cycles logged yet. Health snapshots accumulate as BattCal completes 10-90 passes.")
+                        .font(.callout).foregroundStyle(.secondary)
+                } else {
+                    chart.listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
                 }
-                .padding(16)
+            }
+            Section("Impact Since BattCal Started") {
+                LabeledContent("Cycle count", value: "\(model.status?.cycles ?? 0)" + (model.status?.designCycles.map { " / \($0)" } ?? ""))
+                LabeledContent("Cycles per day", value: pace)
+                LabeledContent("True health now", value: model.status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
+                LabeledContent("Change since start", value: change)
+            }
+            Section {
+                Button { model.openDashboard() } label: { Label("Open web dashboard", systemImage: "safari") }
             }
         }
+        .formStyle(.grouped)
     }
 
     private var chart: some View {
@@ -103,14 +56,12 @@ struct HistoryTab: View {
                 }
         }
         .chartYScale(domain: 76...92)
-        .chartYAxis { AxisMarks { AxisGridLine().foregroundStyle(Color.primary.opacity(0.08)); AxisValueLabel().font(.system(size: 8)) } }
-        .frame(height: 170)
+        .frame(height: 180)
     }
 
     private var change: String {
         guard let f = points.first, let l = points.last else { return "--" }
-        let d = l.health - f.health
-        return String(format: "%+.1f pp", d)
+        return String(format: "%+.1f pp", l.health - f.health)
     }
     private var pace: String {
         guard let f = model.cycles.first, let l = model.cycles.last,
@@ -122,94 +73,51 @@ struct HistoryTab: View {
     }
 }
 
-struct HealthPoint: Identifiable {
-    let date: Date
-    let health: Double
-    var id: Date { date }
-}
-
-// Genius Bar: honest AppleCare evidence + a one-tap pre-appointment calibration cycle.
-struct GeniusBarTab: View {
+// Genius Bar: honest AppleCare evidence + a one-tap pre-appointment cycle, as a native Form.
+struct GeniusBarPane: View {
     @ObservedObject var model: BattCalModel
     private var ev: Evidence? { model.evidence }
     private var symptoms: Bool { ev?.symptomsFound == true }
     private var prepActive: Bool { model.status?.prep?.active == true }
 
     var body: some View {
-        ScrollView {
-            GlassStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 12) {
-                    GlassCard(tint: symptoms ? .orange : .green) {
-                        HStack(spacing: 10) {
-                            Image(systemName: symptoms ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
-                                .foregroundStyle(symptoms ? .orange : .green).font(.title2)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(symptoms ? "Behavioral symptoms found" : "No hardware symptoms found")
-                                    .font(.callout.weight(.semibold))
-                                Text("Apple decides on the macOS Maximum Capacity number, not the raw gauge. This is honest evidence only, never fabricated.")
-                                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer()
-                        }
+        Form {
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: symptoms ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                        .foregroundStyle(symptoms ? .orange : .green).font(.title3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(symptoms ? "Behavioral symptoms found" : "No hardware symptoms found")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Apple decides on the macOS Maximum Capacity number, not the raw gauge. Honest evidence only, never fabricated.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
-
-                    GlassCard {
-                        VStack(alignment: .leading, spacing: 6) {
-                            SectionLabel(text: "HONEST EVIDENCE")
-                            if ev == nil {
-                                Text("Computing from telemetry...").font(.caption).foregroundStyle(.secondary).padding(.vertical, 8)
-                            } else {
-                                KeyValueRow(label: "macOS capacity", value: ev?.macos?.capacity ?? "--")
-                                KeyValueRow(label: "Condition", value: ev?.macos?.condition ?? "--")
-                                KeyValueRow(label: "Estimated runtime",
-                                            value: ev?.runtime?.hours.map { String(format: "%.1f h", $0) } ?? "n/a")
-                                KeyValueRow(label: "Internal resistance",
-                                            value: ev?.resistanceMohm.map { String(format: "%.0f mOhm", $0) } ?? "--",
-                                            tint: ev?.resistanceElevated == true ? .orange : .primary)
-                                KeyValueRow(label: "Unexpected shutdowns", value: "\(ev?.shutdowns?.count ?? 0)",
-                                            tint: (ev?.shutdowns?.isEmpty == false) ? .orange : .primary)
-                                KeyValueRow(label: "Projected at design cycles",
-                                            value: ev?.projection?.projectedAtDesign.map { String(format: "%.0f%%", $0) } ?? "--")
-                            }
-                        }
-                    }
-
-                    if prepActive {
-                        GlassActionButton(title: "End pre-appointment prep", icon: "stop.circle.fill", tint: .red, enabled: model.reachable) { model.endPrep() }
-                    } else {
-                        Button { model.prep() } label: {
-                            HStack {
-                                Image(systemName: "cross.case.fill")
-                                Text("Run pre-appointment cycle").fontWeight(.semibold)
-                                Spacer()
-                                Image(systemName: "arrow.right")
-                            }
-                            .frame(maxWidth: .infinity).padding(.vertical, 3).contentShape(Rectangle())
-                        }
-                        .glassButtonStyle(prominent: true, tint: .orange)
-                        .controlSize(.large)
-                        .disabled(!model.reachable)
-                    }
-
-                    dashboardButton(model)
                 }
-                .padding(16)
+            }
+            Section("Honest Evidence") {
+                if ev == nil {
+                    Text("Computing from telemetry...").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    LabeledContent("macOS capacity", value: ev?.macos?.capacity ?? "--")
+                    LabeledContent("Condition", value: ev?.macos?.condition ?? "--")
+                    LabeledContent("Estimated runtime", value: ev?.runtime?.hours.map { String(format: "%.1f h", $0) } ?? "n/a")
+                    LabeledContent("Internal resistance", value: ev?.resistanceMohm.map { String(format: "%.0f mOhm", $0) } ?? "--")
+                    LabeledContent("Unexpected shutdowns", value: "\(ev?.shutdowns?.count ?? 0)")
+                    LabeledContent("Projected at design cycles", value: ev?.projection?.projectedAtDesign.map { String(format: "%.0f%%", $0) } ?? "--")
+                }
+            }
+            Section {
+                if prepActive {
+                    Button(role: .destructive) { model.endPrep() } label: { Label("End pre-appointment prep", systemImage: "stop.circle.fill") }
+                } else {
+                    Button { model.prep() } label: { Label("Run pre-appointment cycle", systemImage: "cross.case.fill") }
+                }
+            }
+            .disabled(!model.reachable)
+            Section {
+                Button { model.openDashboard() } label: { Label("Open web dashboard", systemImage: "safari") }
             }
         }
+        .formStyle(.grouped)
     }
-}
-
-// Shared "Open web dashboard" footer button.
-@ViewBuilder func dashboardButton(_ model: BattCalModel) -> some View {
-    Button { model.openDashboard() } label: {
-        HStack {
-            Image(systemName: "chart.xyaxis.line")
-            Text("Open web dashboard").fontWeight(.semibold)
-            Spacer()
-            Image(systemName: "arrow.up.forward").font(.caption)
-        }
-        .frame(maxWidth: .infinity).padding(.vertical, 3).contentShape(Rectangle())
-    }
-    .glassButtonStyle(prominent: true, tint: .accentColor)
-    .controlSize(.large)
 }

@@ -1,174 +1,165 @@
 import SwiftUI
 
-// The standalone, resizable window (opened from the popover's pop-out button or by
-// clicking the Dock icon). Tabbed, translucent, built from native SwiftUI components
-// (Gauge / GroupBox / LabeledContent / glass buttons) so it reads as a first-party app.
+// The standalone window: a native macOS sidebar app (NavigationSplitView) with native
+// Form detail panes - the System Settings shell, which adapts to iPad/iPhone too.
 struct MainWindowView: View {
     @ObservedObject var model: BattCalModel
-    @State private var tab = 0
+    @State private var pane: Pane = .thisMac
+
+    enum Pane: String, CaseIterable, Identifiable {
+        case thisMac = "This Mac", history = "History", genius = "Genius Bar"
+        var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .thisMac: return "laptopcomputer"
+            case .history: return "chart.xyaxis.line"
+            case .genius: return "cross.case.fill"
+            }
+        }
+    }
 
     var body: some View {
-        TabView(selection: $tab) {
-            ThisMacTab(model: model)
-                .tabItem { Label("This Mac", systemImage: "laptopcomputer") }.tag(0)
-            HistoryTab(model: model)
-                .tabItem { Label("History", systemImage: "chart.xyaxis.line") }.tag(1)
-            GeniusBarTab(model: model)
-                .tabItem { Label("Genius Bar", systemImage: "cross.case.fill") }.tag(2)
+        GeometryReader { geo in
+            // Wide window -> native sidebar (System Settings). Narrow -> top segmented tabs.
+            if geo.size.width >= 620 {
+                NavigationSplitView {
+                    List(selection: sidebarSelection) {
+                        ForEach(Pane.allCases) { p in
+                            Label(p.rawValue, systemImage: p.icon).tag(p)
+                        }
+                    }
+                    .navigationSplitViewColumnWidth(min: 158, ideal: 172, max: 220)
+                } detail: {
+                    detail
+                }
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                VStack(spacing: 0) {
+                    Picker("Section", selection: $pane) {
+                        ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
+                    Divider()
+                    detail
+                }
+            }
         }
-        .frame(minWidth: 560, minHeight: 460)
+        .frame(minWidth: 380, minHeight: 540)
         .background(VisualEffectView().ignoresSafeArea())
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch pane {
+        case .thisMac: ThisMacPane(model: model)
+        case .history: HistoryPane(model: model)
+        case .genius:  GeniusBarPane(model: model)
+        }
+    }
+
+    private var sidebarSelection: Binding<Pane?> {
+        Binding(get: { pane }, set: { if let v = $0 { pane = v } })
     }
 }
 
-// The main glance tab: a wide two-column dashboard of native components.
-struct ThisMacTab: View {
+// This Mac: a native grouped Form, like the Battery pane in System Settings.
+struct ThisMacPane: View {
     @ObservedObject var model: BattCalModel
     private var s: EngineStatus? { model.status }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                header
+        Form {
+            Section {
+                VStack(spacing: 10) {
+                    Gauge(value: Double(min(100, max(0, s?.pct ?? 0))), in: 0...100) {
+                    } currentValueLabel: {
+                        Text("\(s?.pct ?? 0)").font(.system(.title, design: .rounded).weight(.bold)).monospacedDigit()
+                    }
+                    .gaugeStyle(.accessoryCircularCapacity)
+                    .tint(model.stateColor)
+                    .scaleEffect(2.0)
+                    .frame(width: 108, height: 108)
+                    .padding(.top, 6)
 
-                if model.isDischarging || model.breakUntil != nil {
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        PowerBanner(model: model, now: ctx.date)
+                    VStack(spacing: 3) {
+                        Text(model.stateLine).font(.title3.weight(.semibold))
+                        Text(subline).font(.callout).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                 }
-
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(spacing: 14) {
-                        GroupBox { meters }
-                        GroupBox(label: sectionLabel("Quick Actions")) { actions.padding(.top, 4) }
-                        GroupBox(label: sectionLabel("Mode")) { ModeSelector(model: model).padding(.top, 4) }
-                    }
-                    VStack(spacing: 14) {
-                        GroupBox(label: sectionLabel("Last 3 Hours")) { chart.padding(.top, 4) }
-                        GroupBox(label: sectionLabel("Battery")) { statList.padding(.top, 4) }
-                    }
-                }
-
-                footer
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 
-    private func sectionLabel(_ t: String) -> some View {
-        Text(t).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-    }
-
-    // MARK: hero header - native circular Gauge
-
-    private var header: some View {
-        HStack(spacing: 16) {
-            Gauge(value: Double(min(100, max(0, s?.pct ?? 0))), in: 0...100) {
-            } currentValueLabel: {
-                Text("\(s?.pct ?? 0)").font(.system(.title2, design: .rounded).weight(.bold)).monospacedDigit()
+            if model.isDischarging || model.breakUntil != nil {
+                throttleSection
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .tint(model.stateColor)
-            .scaleEffect(1.6)
-            .frame(width: 76, height: 76)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Circle().fill(model.stateColor).frame(width: 9, height: 9)
-                    Text(model.stateLine).font(.title2.weight(.bold))
-                }
-                Text(subline).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 4)
-    }
-
-    // MARK: left column
-
-    private var meters: some View {
-        VStack(spacing: 12) {
-            Gauge(value: Double(min(100, max(0, s?.pct ?? 0))), in: 0...100) {
-                Text("Charge")
-            } currentValueLabel: {
-                Text("\(s?.pct ?? 0)%").monospacedDigit()
-            }
-            .gaugeStyle(.accessoryLinearCapacity)
-            .tint(model.stateColor)
-
-            Gauge(value: min(100, max(0, s?.rawHealthPct ?? 0)), in: 0...100) {
-                Text("Health")
-            } currentValueLabel: {
-                Text(s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--").monospacedDigit()
-            }
-            .gaugeStyle(.accessoryLinearCapacity)
-            .tint((s?.rawHealthPct ?? 100) >= 80 ? .green : .orange)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var actions: some View {
-        VStack(spacing: 8) {
-            actionButton("Charge to 100% now", "bolt.fill", .blue) { model.select(.normal) }
-            actionButton("Deep calibrate now", "gauge.with.needle", .orange) { model.select(.calibration) }
-            actionButton("Benchmark break", "speedometer", .green) { model.benchmarkBreak(minutes: 30) }
-        }
-    }
-
-    private func actionButton(_ title: String, _ icon: String, _ tint: Color, _ run: @escaping () -> Void) -> some View {
-        Button(action: run) {
-            Label(title, systemImage: icon).frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .glassButtonStyle(tint: tint)
-        .controlSize(.large)
-        .disabled(!model.reachable)
-    }
-
-    // MARK: right column
-
-    private var chart: some View {
-        Group {
-            if model.spark.isEmpty {
-                Text("collecting telemetry...").font(.caption).foregroundStyle(.secondary).frame(height: 150)
-            } else {
-                LiveChart(spark: model.spark, height: 150)
-            }
-        }
-    }
-
-    private var statList: some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
-            GridRow {
+            Section("Battery") {
+                LabeledContent("Charge", value: s?.pct.map { "\($0)%" } ?? "--")
+                LabeledContent("True health", value: s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
                 LabeledContent("Full charge", value: s?.rawMah.map { String(format: "%.0f mAh", $0) } ?? "--")
-                LabeledContent("Design", value: s?.designMah.map { String(format: "%.0f mAh", $0) } ?? "--")
+                LabeledContent("Design capacity", value: s?.designMah.map { String(format: "%.0f mAh", $0) } ?? "--")
+                LabeledContent("Cycle count", value: "\(s?.cycles ?? 0)" + (s?.designCycles.map { " / \($0)" } ?? ""))
+                LabeledContent("Temperature", value: s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
             }
-            GridRow {
-                LabeledContent("Cycles", value: "\(s?.cycles ?? 0)" + (s?.designCycles.map { " / \($0)" } ?? ""))
-                LabeledContent("Temp", value: s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
-            }
-            GridRow {
-                LabeledContent("Power", value: s?.batteryW.map { String(format: "%+.1f W", $0) } ?? "--")
-                LabeledContent("Adapter", value: s?.plugged == true ? "\(s?.adapterW ?? 0) W" : "battery")
-            }
-            GridRow {
+
+            Section("Power") {
+                LabeledContent("Power flow", value: s?.batteryW.map { String(format: "%+.1f W", $0) } ?? "--")
+                LabeledContent("Adapter", value: s?.plugged == true ? "\(s?.adapterW ?? 0) W" : "on battery")
                 LabeledContent("Apple health", value: s?.appleHealth ?? "--")
                 LabeledContent("Condition", value: s?.condition ?? "--")
             }
+
+            if !model.spark.isEmpty {
+                Section("Last 3 Hours") {
+                    LiveChart(spark: model.spark, height: 150)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                }
+            }
+
+            Section("Cycling Mode") {
+                Picker("Mode", selection: modeBinding) {
+                    Text("Longevity - cycle 10-90%").tag(BattCalModel.ActiveMode.longevity)
+                    Text("Calibration - 5-100% passes").tag(BattCalModel.ActiveMode.calibration)
+                    Text("Normal charging").tag(BattCalModel.ActiveMode.normal)
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                .disabled(!model.reachable)
+            }
+
+            Section("Quick Actions") {
+                Button { model.select(.normal) } label: { Label("Charge to 100% now", systemImage: "bolt.fill") }
+                Button { model.select(.calibration) } label: { Label("Deep calibrate now", systemImage: "gauge.with.needle") }
+                Button { model.benchmarkBreak(minutes: 30) } label: { Label("Benchmark break (30 min)", systemImage: "speedometer") }
+            }
+            .disabled(!model.reachable)
+
+            Section {
+                Button { model.openDashboard() } label: { Label("Open web dashboard", systemImage: "safari") }
+            }
         }
-        .labeledContentStyle(.stat)
-        .padding(.vertical, 2)
+        .formStyle(.grouped)
     }
 
-    // MARK: footer
-
-    private var footer: some View {
-        Button { model.openDashboard() } label: {
-            Label("Open web dashboard", systemImage: "safari").frame(maxWidth: .infinity)
+    private var throttleSection: some View {
+        Section {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("CPU is power-throttled").font(.subheadline.weight(.semibold))
+                    Text("Draining on battery, so heavy compute scores lower. Take a break to run at full speed.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Button { model.benchmarkBreak(minutes: 30) } label: { Label("Benchmark break (30 min)", systemImage: "speedometer") }
         }
-        .glassButtonStyle(prominent: true, tint: .accentColor)
-        .controlSize(.large)
+    }
+
+    private var modeBinding: Binding<BattCalModel.ActiveMode> {
+        Binding(get: { model.activeMode }, set: { model.select($0) })
     }
 
     private var subline: String {
@@ -180,20 +171,4 @@ struct ThisMacTab: View {
         }
         return parts.joined(separator: "  \u{00B7}  ")
     }
-}
-
-// Compact vertical LabeledContent (label above value) for dense stat grids.
-struct StatLabeledContentStyle: LabeledContentStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            configuration.label
-                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-            configuration.content
-                .font(.system(.callout, design: .rounded).weight(.semibold)).monospacedDigit()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-extension LabeledContentStyle where Self == StatLabeledContentStyle {
-    static var stat: StatLabeledContentStyle { StatLabeledContentStyle() }
 }

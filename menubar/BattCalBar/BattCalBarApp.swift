@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.isMovableByWindowBackground = true
             w.isOpaque = false
             w.backgroundColor = .clear
-            w.setContentSize(NSSize(width: 620, height: 712))
+            w.setContentSize(NSSize(width: 720, height: 600))
             w.isReleasedWhenClosed = false
             positionNearStatusItem(w)
             mainWindow = w
