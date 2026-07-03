@@ -60,6 +60,16 @@ const num = (src, key) => {
   const m = src.match(new RegExp(`^ *"${key}" = (\\d+)$`, 'm'));
   return m ? Number(m[1]) : null;
 };
+// Amperage/current fields are unsigned 64-bit two's-complement in ioreg: a discharge
+// reads as ~2^64 - x. Recover the exact signed value in BigInt space; parsing via Number()
+// first (as num() does) rounds to the nearest ~2048 near 2^64 and quantizes the reading.
+const signedNum = (src, key) => {
+  const m = src.match(new RegExp(`^ *"${key}" = (\\d+)$`, 'm'));
+  if (!m) return null;
+  let v = BigInt(m[1]);
+  if (v >= 1n << 63n) v -= 1n << 64n;
+  return Number(v);
+};
 
 function status() {
   const n = ns();
@@ -76,8 +86,7 @@ function status() {
   const design = num(ior, 'DesignCapacity');
   const nominal = num(ior, 'NominalChargeCapacity');
   const voltage = num(ior, 'Voltage');
-  let amperage = num(ior, 'Amperage');
-  if (amperage !== null && amperage > 9e18) amperage -= 2 ** 64;
+  const amperage = signedNum(ior, 'Amperage');
   const temp = num(ior, 'Temperature');
   const cycleMatch = ior.match(/^ {6}"CycleCount" = (\d+)$/m);
   let state = 'stopped';

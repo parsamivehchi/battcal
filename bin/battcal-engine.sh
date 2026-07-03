@@ -141,8 +141,11 @@ log_telemetry() {
   rawmax=$(echo "$ior" | sed -n 's/^ *"AppleRawMaxCapacity" = \([0-9]*\)$/\1/p')
   mv=$(echo "$ior" | sed -n 's/^ *"Voltage" = \([0-9]*\)$/\1/p')
   ma=$(echo "$ior" | sed -n 's/^ *"Amperage" = \([0-9]*\)$/\1/p')
-  # Amperage is unsigned 64-bit in ioreg; discharge shows as 2^64-x. Convert to signed.
-  ma=$(awk "BEGIN{v=$ma+0; if (v>9e18) v-=18446744073709551616; printf \"%d\", v}")
+  # Amperage is unsigned 64-bit two's-complement in ioreg; a discharge reads as ~2^64-x.
+  # Reinterpret the exact bits as signed via perl pack/unpack. Parsing the ~20-digit value
+  # as a float first (awk, or $((...)) overflow) rounds to the nearest ~2048 near 2^64 and
+  # quantizes every discharge reading, so keep the conversion in integer space.
+  ma=$(perl -e 'print unpack("q", pack("Q", $ARGV[0] || 0))' "$ma" 2>/dev/null); ma=${ma:-0}
   temp=$(echo "$ior" | sed -n 's/^ *"Temperature" = \([0-9]*\)$/\1/p')
   temp=$(awk "BEGIN{printf \"%.1f\", ${temp:-0}/100}")
   aw=$(echo "$ior" | grep '"AdapterDetails"' | sed -n 's/.*"Watts"=\([0-9]*\).*/\1/p'); aw=${aw:-0}
