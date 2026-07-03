@@ -6,7 +6,7 @@ struct PopoverView: View {
     var onPopOut: () -> Void = {}
     var inWindow: Bool = false   // true when hosted in the standalone window (no pop-out button)
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.eta.rawValue
+    @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.live.rawValue
 
     private var s: EngineStatus? { model.status }
 

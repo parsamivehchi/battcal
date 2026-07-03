@@ -65,7 +65,13 @@ function stateMeta(s: Status | null) {
   }
 }
 
-interface Pt { t: number; pct: number; w: number; temp: number; state: string }
+interface Pt { t: number; pct: number; w: number; temp: number | null; state: string }
+
+// Treat non-finite / non-positive readings as missing. The engine writes temp=0.0 on a failed
+// ioreg read and can emit blank health cells; coalescing them to null keeps a stray 0 from
+// crushing the temp axis or drawing a phantom 0% health point. Number.isFinite-guarded so a null
+// can never coerce back to 0 in a downstream Math.min.
+const pos = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null);
 
 const fmtDur = (ms: number): string => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -182,12 +188,12 @@ export default function App() {
   };
 
   const pts: Pt[] = useMemo(() => rows.map((r) => ({
-    t: new Date(r.ts).getTime(), pct: r.pct, w: r.battery_W, temp: r.temp_C, state: r.state,
+    t: new Date(r.ts).getTime(), pct: r.pct, w: r.battery_W, temp: pos(r.temp_C), state: r.state,
   })).filter((p) => Number.isFinite(p.t)), [rows]);
 
   const spanMs = useMemo(() => (pts.length > 1 ? pts[pts.length - 1].t - pts[0].t : 3600e3), [pts]);
   const timeTicks = useMemo(() => (pts.length > 1 ? niceTimeTicks(pts[0].t, pts[pts.length - 1].t) : []), [pts]);
-  const tempScale = useMemo(() => steppedScale(pts.map((p) => p.temp), 0.5), [pts]);
+  const tempScale = useMemo(() => steppedScale(pts.map((p) => p.temp ?? NaN), 0.5), [pts]);
   const powScale = useMemo(() => steppedScale(pts.map((p) => p.w), powerStep(pts.map((p) => p.w)), { includeZero: true }), [pts]);
 
   const powerOffset = useMemo(() => {
@@ -199,9 +205,9 @@ export default function App() {
     t: new Date(String(c.date).replace(' ', 'T') + ':00').getTime(),
     cycle: c.cycle_count,
     mode: c.mode ?? '-',
-    raw: status?.designMah ? +(100 * c.raw_mAh / status.designMah).toFixed(1) : null,
-    nominal: status?.designMah ? +(100 * c.nominal_mAh / status.designMah).toFixed(1) : null,
-    apple: typeof c.apple_health === 'string' ? Number(String(c.apple_health).replace('%', '')) : c.apple_health,
+    raw: status?.designMah ? pos(+(100 * c.raw_mAh / status.designMah).toFixed(1)) : null,
+    nominal: status?.designMah ? pos(+(100 * c.nominal_mAh / status.designMah).toFixed(1)) : null,
+    apple: pos(typeof c.apple_health === 'string' ? Number(String(c.apple_health).replace('%', '')) : c.apple_health),
   })).filter((h) => Number.isFinite(h.t)), [cycles, status?.designMah]);
 
   const healthTicks = useMemo(() => (healthPts.length > 1 ? niceTimeTicks(healthPts[0].t, healthPts[healthPts.length - 1].t) : []), [healthPts]);
@@ -224,11 +230,12 @@ export default function App() {
       else idleMs += dt;
       if (a.battery_W < 0) dischargeWh += (Math.abs(a.battery_W) * dt) / 3600e3;
       minPct = Math.min(minPct, a.pct); maxPct = Math.max(maxPct, a.pct);
-      minT = Math.min(minT, a.temp_C); maxT = Math.max(maxT, a.temp_C);
+      const tc = pos(a.temp_C);
+      if (tc != null) { minT = Math.min(minT, tc); maxT = Math.max(maxT, tc); }
     }
     const turnarounds = cycles.filter((c) => Date.now() - new Date(String(c.date).replace(' ', 'T') + ':00').getTime() < 24 * 3600e3).length;
     const hrs = (ms: number) => (ms / 3600e3).toFixed(1);
-    return { drainH: hrs(drainMs), chargeH: hrs(chargeMs), idleH: hrs(idleMs), dischargeWh: dischargeWh.toFixed(1), minPct, maxPct, minT, maxT, turnarounds };
+    return { drainH: hrs(drainMs), chargeH: hrs(chargeMs), idleH: hrs(idleMs), dischargeWh: dischargeWh.toFixed(1), minPct, maxPct, minT: Number.isFinite(minT) ? minT : null, maxT: Number.isFinite(maxT) ? maxT : null, turnarounds };
   }, [dayRows, cycles]);
 
   // How is BattCal affecting the cycle counter and the health numbers?
@@ -242,7 +249,7 @@ export default function App() {
     const ratedPctPerMonth = (perMonth / status.designCycles) * 100;
     const rawStartPct = first.raw;
     const rawNowPct = status.rawHealthPct;
-    const appleNow = typeof status.appleHealth === 'string' ? Number(String(status.appleHealth).replace('%', '')) : status.appleHealth;
+    const appleNow = pos(typeof status.appleHealth === 'string' ? Number(String(status.appleHealth).replace('%', '')) : status.appleHealth);
     return {
       sinceDays: days.toFixed(1),
       startCycle: first.cycle,
@@ -492,7 +499,7 @@ export default function App() {
             <div><b>{story.idleH}h</b><span>paused / idle</span></div>
             <div><b>{story.dischargeWh} Wh</b><span>energy discharged</span></div>
             <div><b>{story.minPct}-{story.maxPct}%</b><span>battery range</span></div>
-            <div><b>{story.minT}-{story.maxT}°C</b><span>temp range</span></div>
+            <div><b>{story.minT ?? '--'}-{story.maxT ?? '--'}°C</b><span>temp range</span></div>
           </div>
         </div>
       )}

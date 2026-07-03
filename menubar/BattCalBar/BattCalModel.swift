@@ -5,10 +5,11 @@ import UserNotifications
 // What the menu bar label shows next to the battery glyph. macOS already has
 // its own percent readout, so the smart default is time-to-target.
 enum LabelStyle: String, CaseIterable, Identifiable {
-    case iconOnly, eta, power, percent, health
+    case live, iconOnly, eta, power, percent, health
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .live: return "Live vitals"
         case .iconOnly: return "Icon only"
         case .eta: return "Time to target"
         case .power: return "Power (W)"
@@ -68,10 +69,12 @@ final class BattCalModel: ObservableObject {
     @Published var spark: [TelemetryPoint] = []
     @Published var engineLoaded = true
     @Published var reachable = true
+    @Published var vitalIndex = 0        // advances every 5s to rotate the Live-vitals menu bar label
     private var ampHistory: [Double] = []
 
     private let base = URL(string: "http://localhost:4437")!
     private var timer: Timer?
+    private var vitalTimer: Timer?
     private let agentLabel = "com.parsa.battery-calibrate"
     private let agentPlist = ("~/Library/LaunchAgents/com.parsa.battery-calibrate.plist" as NSString).expandingTildeInPath
 
@@ -80,6 +83,11 @@ final class BattCalModel: ObservableObject {
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
+        }
+        // Rotate the Live-vitals label (health -> temp -> cycles) on its own 5s cadence,
+        // independent of the 15s data poll.
+        vitalTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.vitalIndex &+= 1 }
         }
     }
 
@@ -102,7 +110,11 @@ final class BattCalModel: ObservableObject {
                let pts = try? JSONDecoder().decode([TelemetryPoint].self, from: d) {
                 spark = pts
             }
-            engineLoaded = Self.run("/bin/launchctl", ["print", "gui/\(getuid())/\(agentLabel)"]) == 0
+            // Run the blocking `launchctl print` off the main actor so the 15s poll never
+            // stalls the UI; the result assignment resumes back on MainActor after the await.
+            let label = agentLabel
+            let loaded = await Task.detached { Self.run("/bin/launchctl", ["print", "gui/\(getuid())/\(label)"]) == 0 }.value
+            engineLoaded = loaded
         }
     }
 
@@ -203,6 +215,29 @@ final class BattCalModel: ObservableObject {
         }
     }
 
+    // Rotating "live vitals" for the menu bar while the battery is flat (full / holding / normal
+    // charging), where a watts readout would just read 0.0W. Cycles health -> temp -> cycles every
+    // 5s (see vitalTimer). Skips any datum the engine has not reported yet.
+    var steadyVitals: [(symbol: String, text: String, label: String)] {
+        guard let s = status else { return [] }
+        var v: [(String, String, String)] = []
+        if let h = s.rawHealthPct { v.append(("heart.fill", String(format: "%.0f%%", h), "True health")) }
+        if let t = s.tempC { v.append(("thermometer.medium", String(format: "%.0f\u{00B0}C", t), "Temperature")) }
+        if let c = s.cycles { v.append(("arrow.triangle.2.circlepath", "\(c)", "Cycles")) }
+        return v
+    }
+
+    var currentVital: (symbol: String, text: String, label: String)? {
+        let v = steadyVitals
+        return v.isEmpty ? nil : v[vitalIndex % v.count]
+    }
+
+    // "Flat" = no meaningful power flow: steady, or charging at a trickle near full. Both are cases
+    // where a live wattage would read ~0.0W, so the Live style rotates vitals instead.
+    var isFlatFlow: Bool {
+        flow == .steady || (flow == .charging && abs(status?.batteryW ?? 0) < 1)
+    }
+
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
 
@@ -296,12 +331,14 @@ final class BattCalModel: ObservableObject {
         }
     }
 
-    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. While actively
-    // cycling it marks the FLOW DIRECTION (bolt = power in, down-arrow = draining,
-    // cycle-arrows = steady/holding). Paused or engine-off keeps the pause circle, and
-    // an unreachable server shows a warning triangle. Never a second battery/percent.
-    var menuBarSymbol: String {
+    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. In the Live style, while the
+    // battery is flat it shows the current rotating vital's glyph (heart / thermometer / cycle).
+    // Otherwise, while actively cycling it marks FLOW DIRECTION (bolt = in, down-arrow = draining,
+    // cycle-arrows = steady). Paused or engine-off keeps the pause circle; an unreachable server
+    // shows a warning triangle. Never a second battery/percent.
+    func menuBarSymbol(for style: LabelStyle) -> String {
         guard reachable else { return "exclamationmark.triangle" }
+        if style == .live, isFlatFlow, let v = currentVital { return v.symbol }
         if !engineLoaded || status?.paused == true { return "pause.circle" }
         switch flow {
         case .charging: return "bolt.fill"
@@ -350,6 +387,9 @@ final class BattCalModel: ObservableObject {
         if activeMode == .off { return "off" }      // engine stopped: nothing live to show
         switch style {
         case .iconOnly: return nil
+        // Live vitals: rotating health/temp/cycles while flat (never a dead 0.0W), directional
+        // watts while actually charging or draining.
+        case .live:    return isFlatFlow ? (currentVital?.text ?? titleText) : (powerLabel ?? titleText)
         // Directional watts in EVERY mode. This is what "Power (W)" now means, including
         // normal mode where the label used to be a static "normal" that ignored the picker.
         case .power:   return powerLabel ?? titleText

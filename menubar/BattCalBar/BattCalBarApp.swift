@@ -23,6 +23,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // One-time migration to the new Live-vitals default, so the menu bar shows rotating
+        // vitals instead of a dead 0.0W when the battery is flat. Only moves the old dynamic
+        // defaults (eta/power/unset); an explicit percent/health/icon choice is preserved.
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "didMigrateLiveV1") {
+            let cur = defaults.string(forKey: "menuLabelStyle")
+            if cur == nil || cur == "eta" || cur == "power" { defaults.set("live", forKey: "menuLabelStyle") }
+            defaults.set(true, forKey: "didMigrateLiveV1")
+        }
         // Proper app: Dock icon + cmd-tab, in addition to the menu bar item.
         NSApp.setActivationPolicy(.regular)
 
@@ -43,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the menu bar title in sync with the live model + chosen label style.
         model.$status.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         model.$reachable.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
+        model.$vitalIndex.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         updateButton()
@@ -56,12 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateButton() {
         guard let button = statusItem.button else { return }
-        let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.eta.rawValue
-        let style = LabelStyle(rawValue: raw) ?? .eta
-        // Always show BattCal's distinct cycle glyph so the item reads as BattCal, not a
-        // stray number next to macOS's battery. iconOnly is glyph-only; every other style
-        // adds a compact status (ETA/watts/mode), never a bare percent that duplicates macOS.
-        button.image = NSImage(systemSymbolName: model.menuBarSymbol, accessibilityDescription: "BattCal")
+        let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
+        let style = LabelStyle(rawValue: raw) ?? .live
+        // Always show BattCal's distinct glyph so the item reads as BattCal, not a stray number
+        // next to macOS's battery. iconOnly is glyph-only; every other style adds a compact status
+        // (rotating vitals / ETA / watts), never a bare percent that duplicates macOS.
+        button.image = NSImage(systemSymbolName: model.menuBarSymbol(for: style),
+                               accessibilityDescription: model.currentVital?.label ?? "BattCal")
         let text = (style == .iconOnly) ? nil : model.menuLabel(for: style)
         button.title = text.map { " \($0)" } ?? ""
     }
