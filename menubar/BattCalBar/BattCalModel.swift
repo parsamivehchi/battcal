@@ -296,12 +296,18 @@ final class BattCalModel: ObservableObject {
         }
     }
 
-    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. A cycle-arrows glyph
-    // marks the item as BattCal (a band cycler), never a second battery/percent readout.
+    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. While actively
+    // cycling it marks the FLOW DIRECTION (bolt = power in, down-arrow = draining,
+    // cycle-arrows = steady/holding). Paused or engine-off keeps the pause circle, and
+    // an unreachable server shows a warning triangle. Never a second battery/percent.
     var menuBarSymbol: String {
         guard reachable else { return "exclamationmark.triangle" }
         if !engineLoaded || status?.paused == true { return "pause.circle" }
-        return "arrow.triangle.2.circlepath"
+        switch flow {
+        case .charging: return "bolt.fill"
+        case .draining: return "arrow.down.circle"
+        case .steady:   return "arrow.triangle.2.circlepath"
+        }
     }
 
     var titleText: String {
