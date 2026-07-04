@@ -198,33 +198,36 @@ function evidence() {
   const usableWh = st.rawMah ? (st.rawMah / 1000) * nomV : (design ? (design / 1000) * nomV : null);
   const runtimeHrs = medW && usableWh ? +(usableWh / medW).toFixed(1) : null;
 
-  // Internal resistance: slope of pack voltage (mV) vs current (mA) via least squares.
-  // Fit pack voltage vs current on DISCHARGE rows only. Mixing charge + drain across the
-  // SoC sweep makes the slope track OCV-vs-SoC (current sign correlates with charge level),
-  // not the true I*R term, which can fabricate an "elevated resistance". A near-constant
-  // current then makes the denominator ~0 and yields null (an honest "cannot tell").
-  const pts = rows.filter((r) => r.state === 'drain')
-    .map((r) => ({ v: Number(r.voltage_mV), i: Number(r.amperage_mA) }))
-    .filter((p) => Number.isFinite(p.v) && Number.isFinite(p.i) && p.v > 0 && p.i < 0);
-  // A resistance fit needs many DISTINCT current levels: coarse or quantized current (only a
-  // few levels, e.g. legacy telemetry rounded to ~2048 mA) yields a slope dominated by noise,
-  // not I*R, so report null rather than a fabricated "elevated" number.
-  const levels = new Set(pts.map((p) => Math.round(p.i)));
-  let resistanceMohm = null;
-  if (pts.length > 20 && levels.size >= 8) {
-    const n2 = pts.length;
-    const sx = pts.reduce((a, p) => a + p.i, 0);
-    const sy = pts.reduce((a, p) => a + p.v, 0);
-    const sxx = pts.reduce((a, p) => a + p.i * p.i, 0);
-    const sxy = pts.reduce((a, p) => a + p.i * p.v, 0);
-    const denom = n2 * sxx - sx * sx;
-    if (Math.abs(denom) > 1e-6) {
-      // slope mV per mA = ohms; *1000 = mOhm. Positive: V rises with (signed) current.
-      const slope = (n2 * sxy - sx * sy) / denom;
-      resistanceMohm = +(Math.abs(slope) * 1000).toFixed(1);
-    }
+  // Internal resistance via LOCAL step pairs at near-constant charge level.
+  // Terminal voltage V = OCV(SoC) + I*R (I signed, negative on discharge; R > 0). Across a full
+  // discharge OCV swings ~2.5 V with SoC and DWARFS the I*R term, so ANY whole-sweep V-vs-I fit
+  // (even drain-only) tracks OCV(SoC), not resistance: it fabricated ~296 mOhm on a Condition-Normal
+  // pack (a healthy MBP14 3S pack is ~50-150 mOhm). To isolate I*R, only compare samples at the SAME
+  // charge level, where OCV is ~constant, so dV/dI is the resistance. Take consecutive drain samples
+  // with unchanged pct but a real current step, keep the plausible per-pair slopes, and MEDIAN them.
+  // If the data cannot support a trustworthy estimate, report null ("cannot tell"), never a fabricated
+  // number: BattCal's rule is to never invent a symptom.
+  const rPairs = [];
+  for (let k = 1; k < rows.length; k++) {
+    const a = rows[k - 1], b = rows[k];
+    if (a.state !== 'drain' || b.state !== 'drain') continue;
+    if (Number(a.pct) !== Number(b.pct)) continue;                 // same charge level => OCV ~ constant
+    const dt = (new Date(b.ts).getTime() - new Date(a.ts).getTime()) / 1000;
+    if (!(dt > 0 && dt <= 60)) continue;                           // adjacent samples: OCV drift negligible
+    const v1 = Number(a.voltage_mV), v2 = Number(b.voltage_mV);
+    const i1 = Number(a.amperage_mA), i2 = Number(b.amperage_mA);
+    if (![v1, v2, i1, i2].every(Number.isFinite)) continue;
+    const di = i2 - i1;
+    if (Math.abs(di) < 150) continue;                              // need a real current step, not noise
+    const r = ((v2 - v1) / di) * 1000;                             // mV/mA = ohms; *1000 = mOhm
+    if (r > 10 && r < 1000) rPairs.push(r);                        // physically plausible pack range only
   }
-  const resistanceElevated = resistanceMohm !== null && resistanceMohm > 250; // conservative
+  let resistanceMohm = null;
+  if (rPairs.length >= 8) {
+    rPairs.sort((x, y) => x - y);
+    resistanceMohm = +rPairs[Math.floor(rPairs.length / 2)].toFixed(1);
+  }
+  const resistanceElevated = resistanceMohm !== null && resistanceMohm > 400; // conservative; healthy pack ~50-150 mOhm
 
   // Unexpected shutdowns: a telemetry gap is only evidence of one if the machine LOST charge
   // while the adapter was supposed to be ON (state charge/hold). A plugged Mac should hold or
@@ -261,8 +264,10 @@ function evidence() {
   if (rawNow != null && cyclesNow) {
     const lostPct = 100 - rawNow;
     const perCycle = cyclesNow > 0 ? lostPct / cyclesNow : 0;
-    const atDesign = +(100 - perCycle * designCycles).toFixed(0);
-    projection = { lostPct: +lostPct.toFixed(1), cyclesNow, perCycle: +perCycle.toFixed(3), designCycles, projectedAtDesign: atDesign };
+    // Report only the MEASURED rate. A linear extrapolation to design cycles is deliberately omitted:
+    // lithium fade is nonlinear (fast early, then it flattens), so projecting the early rate straight
+    // out fabricates a scary "~X% at 1000 cycles" that overstates real loss. Facts to date only.
+    projection = { lostPct: +lostPct.toFixed(1), cyclesNow, perCycle: +perCycle.toFixed(3), designCycles };
   }
 
   const symptomsFound = shutdowns.length > 0 || resistanceElevated;

@@ -60,9 +60,9 @@ export interface Evidence {
   runtime: { hours: number; atWatts: number; note: string } | null;
   resistanceMohm: number | null;
   resistanceElevated: boolean;
-  shutdowns: Array<{ at: string; pct: number; gapMin: number }>;
+  shutdowns: Array<{ at: string; pct: number; gapMin: number; dropPct: number }>;
   tempRange: { min: number; max: number } | null;
-  projection: { lostPct: number; cyclesNow: number; perCycle: number; designCycles: number; projectedAtDesign: number } | null;
+  projection: { lostPct: number; cyclesNow: number; perCycle: number; designCycles: number } | null;
   symptomsFound: boolean;
   startedTracking: string | null;
   generatedAt: string;

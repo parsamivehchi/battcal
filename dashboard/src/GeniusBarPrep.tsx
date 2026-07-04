@@ -45,7 +45,7 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
           {/* The printable report */}
           <div className="report">
             <h3 className="report-title">BattCal battery evidence</h3>
-            <p className="report-sub">Generated {ev ? new Date(ev.generatedAt).toLocaleString() : '…'} · tracking since {ev?.startedTracking ?? '—'}</p>
+            <p className="report-sub">Generated {ev ? new Date(ev.generatedAt).toLocaleString() : '…'} · tracking since {ev?.startedTracking ?? '--'}</p>
 
             <div className="report-hero">
               <div><span className="rl">macOS Maximum Capacity</span><b>{ev?.macos.capacity ?? status?.appleHealth ?? '--'}</b><span className="rn">the number Apple decides on</span></div>
@@ -56,26 +56,26 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
             {ev?.projection && (
               <p className="report-arg">
                 <b>Degradation vs. cycle life:</b> {ev.projection.lostPct}% capacity lost in {ev.projection.cyclesNow} cycles
-                ({(ev.projection.perCycle * 100).toFixed(3)}% per cycle). At that rate the battery reaches
-                <b> ~{ev.projection.projectedAtDesign}%</b> by its {ev.projection.designCycles}-cycle rating, versus Apple's
-                80%-at-1000 design spec. A supporting engineering point for a senior advisor.
+                ({(ev.projection.perCycle * 100).toFixed(3)}% per cycle so far), against Apple's 80%-at-{ev.projection.designCycles}-cycle
+                design spec. Lithium fade is nonlinear (faster early, then it flattens), so this is the measured rate to date,
+                not a forward projection. A supporting engineering point for a senior advisor.
               </p>
             )}
 
             <h4 className="report-h">Behavioral evidence (the lever that actually works)</h4>
             <table className="data report-table">
               <tbody>
-                <tr><td>Estimated runtime</td><td>{ev?.runtime ? `~${ev.runtime.hours} h at ${ev.runtime.atWatts} W` : '—'}</td><td className="rn">{ev?.runtime?.note ?? ''}</td></tr>
-                <tr><td>Internal resistance</td><td>{ev?.resistanceMohm != null ? `${ev.resistanceMohm} mΩ` : '—'}</td><td className="rn">{ev?.resistanceElevated ? 'ELEVATED – a real "not functioning normally" signal' : 'within normal range'}</td></tr>
-                <tr><td>Unexpected shutdowns (&gt;15%)</td><td>{ev ? ev.shutdowns.length : '—'}</td><td className="rn">{ev && ev.shutdowns.length ? ev.shutdowns.map((s) => `${s.pct}% on ${s.at}`).join('; ') : 'none detected'}</td></tr>
-                <tr><td>Battery temperature range</td><td>{ev?.tempRange ? `${ev.tempRange.min}–${ev.tempRange.max} °C` : '—'}</td><td className="rn">normal operating range</td></tr>
+                <tr><td>Estimated runtime</td><td>{ev?.runtime ? `~${ev.runtime.hours} h at ${ev.runtime.atWatts} W` : '--'}</td><td className="rn">{ev?.runtime?.note ?? ''}</td></tr>
+                <tr><td>Internal resistance</td><td>{ev?.resistanceMohm != null ? `${ev.resistanceMohm} mΩ` : '--'}</td><td className="rn">{ev?.resistanceElevated ? 'ELEVATED - a real "not functioning normally" signal' : 'within normal range'}</td></tr>
+                <tr><td>Unexpected shutdowns (&gt;15%)</td><td>{ev ? ev.shutdowns.length : '--'}</td><td className="rn">{ev && ev.shutdowns.length ? ev.shutdowns.map((s) => `${s.pct}% on ${s.at}`).join('; ') : 'none detected'}</td></tr>
+                <tr><td>Battery temperature range</td><td>{ev?.tempRange ? `${ev.tempRange.min}-${ev.tempRange.max} °C` : '--'}</td><td className="rn">normal operating range</td></tr>
               </tbody>
             </table>
 
             <div className={`report-verdict ${ev?.symptomsFound ? 'ok' : 'thin'}`}>
               {ev?.symptomsFound
                 ? 'Real symptoms detected above. Lead with these at the Genius Bar.'
-                : 'No behavioral symptoms detected so far. Honest read: with macOS at ' + (ev?.macos.capacity ?? '89%') + ' and Condition "' + (ev?.macos.condition ?? 'Normal') + '", a free replacement is unlikely today (~5-15%). Best paths: run prep cycles and watch for macOS to reach ≤80% or the Condition flag to trip, and open an AppleCare case before it expires.'}
+                : 'No behavioral symptoms detected so far. Honest read: with macOS at ' + (ev?.macos.capacity ?? status?.appleHealth ?? 'its current level') + ' and Condition "' + (ev?.macos.condition ?? status?.condition ?? 'unknown') + '", a free replacement is unlikely today (~5-15%). Best paths: run prep cycles and watch for macOS to reach ≤80% or the Condition flag to trip, and open an AppleCare case before it expires.'}
             </div>
 
             <p className="report-raw">Raw gauge (records only): {ev?.raw.pct ?? status?.rawHealthPct ?? '--'}% · {ev?.raw.mah ?? '--'}/{ev?.raw.designMah ?? '--'} mAh. {ev?.raw.note}</p>
@@ -84,7 +84,7 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
             <div className="dodont">
               <div><div className="dd-h do">Do</div><ul>
                 <li>Lead with behavioral symptoms (runtime, shutdowns, drops).</li>
-                <li>Cite the {ev?.projection?.lostPct ?? 20}%-in-{ev?.cycles ?? 355}-cycles degradation as support.</li>
+                <li>{ev?.projection ? `Cite the ${ev.projection.lostPct}%-in-${ev.projection.cyclesNow}-cycles degradation as support.` : 'Cite the measured degradation rate (shown above) as support.'}</li>
                 <li>Ask them to run the diagnostic and note the exact reading.</li>
                 <li>Ask them to log the case even if they say no today.</li>
                 <li>Open an AppleCare case before it expires (preserves coverage).</li>
