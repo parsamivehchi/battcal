@@ -25,7 +25,7 @@
 # Off:        launchctl bootout gui/$(id -u)/com.battcal.calibrate ; batt adapter enable
 # Watch:      tail -f ~/Library/Logs/battcal.log
 # History:    ~/Library/Logs/battcal-history.csv (one row per cycle)
-# Telemetry:  ~/Library/Logs/battcal-telemetry.csv (one row per poll)
+# Telemetry:  ~/Library/Logs/battcal-telemetry.csv (one row per poll, 15s)
 #
 # Config (optional): ~/.battcal/config may override POLL, HOLD_SECS,
 # LONGEVITY_LOW, LONGEVITY_HIGH, CALIBRATION_LOW, BATT, LOAD_THRESHOLD.
@@ -185,7 +185,9 @@ log "=== battcal engine started (state=$STATE, mode=$LAST_MODE, battery $(pct)%)
 # Reassert adapter mode for the state we woke up in (unless paused)
 if [ ! -f "$PAUSE_FILE" ]; then
   case "$STATE" in
-    drain)        "$BATT" adapter disable >>"$LOG" 2>&1 ;;
+    # In drain, re-cut the adapter only if the CPU is not pegged: a restart during a heavy job
+    # would otherwise drain (and throttle) for one poll until the loop re-checks load.
+    drain)        user_busy || "$BATT" adapter disable >>"$LOG" 2>&1 ;;
     charge|hold)  "$BATT" adapter enable  >>"$LOG" 2>&1 ;;
   esac
 fi

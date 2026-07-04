@@ -4,13 +4,20 @@
 # <xbar.dependencies>batt, battcal</xbar.dependencies>
 # SwiftBar plugin, refreshes every 10s (filename battcal.10s.sh).
 
-STATE_FILE=/var/tmp/battcal.state
-PAUSE_FILE=/var/tmp/battcal.pause
-LOG="$HOME/Library/Logs/battcal.log"
-CSV="$HOME/Library/Logs/battcal-history.csv"
-AGENT_LABEL=com.battcal.calibrate
-AGENT_PLIST="$HOME/Library/LaunchAgents/${AGENT_LABEL}.plist"
 ME_UID=$(id -u)
+# Detect the active namespace so the plugin works both on a published install (battcal.*) and on a
+# personal deployment (battery-calibrate.* + com.parsa.battery-calibrate). Whichever the running
+# engine uses wins; otherwise the plugin reads the wrong state files and always shows "stopped".
+if [ -f /var/tmp/battery-calibrate.state ] || launchctl print "gui/$ME_UID/com.parsa.battery-calibrate" >/dev/null 2>&1; then
+  NS=battery-calibrate; AGENT_LABEL=com.parsa.battery-calibrate
+else
+  NS=battcal; AGENT_LABEL=com.battcal.calibrate
+fi
+STATE_FILE="/var/tmp/${NS}.state"
+PAUSE_FILE="/var/tmp/${NS}.pause"
+LOG="$HOME/Library/Logs/${NS}.log"
+CSV="$HOME/Library/Logs/${NS}-history.csv"
+AGENT_PLIST="$HOME/Library/LaunchAgents/${AGENT_LABEL}.plist"
 
 PCT=$(pmset -g batt | grep -Eo '[0-9]+%' | head -1 | tr -d '%')
 IOR=$(ioreg -rn AppleSmartBattery)
