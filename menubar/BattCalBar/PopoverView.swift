@@ -52,16 +52,16 @@ struct PopoverView: View {
             // While the battery holds (flat %), swap the pinned-flat % line for a livelier
             // temperature series so the chart still says something.
             if model.sparkIsFlat, !model.sparkTemps.isEmpty {
-                LiveChart(spark: model.sparkTemps, mode: .temp)
-            } else if !model.spark.isEmpty {
-                LiveChart(spark: model.spark)
+                LiveChart(spark: model.sparkTemps, mode: .temp, live: model.spark.isEmpty)
+            } else if !model.chartData.isEmpty {
+                LiveChart(spark: model.chartData)
             }
 
             // Mode selector
             Text("MODE").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).padding(.top, 2)
             ModeSelector(model: model)
             if !model.reachable {
-                Text("BattCal server offline \u{2013} controls disabled").font(.caption).foregroundStyle(.secondary)
+                Text("BattCal server offline - controls disabled").font(.caption).foregroundStyle(.secondary)
             }
 
             // Stats grid

@@ -117,6 +117,7 @@ struct LiveChart: View {
     let spark: [TelemetryPoint]
     var height: CGFloat = 56
     var mode: Mode = .pct
+    var live: Bool = false   // true when fed by the live status buffer (paused), not the 3h telemetry window
 
     private func y(_ p: TelemetryPoint) -> Double { (mode == .temp ? p.tempC : p.pct) ?? 0 }
 
@@ -158,7 +159,7 @@ struct LiveChart: View {
         .frame(height: height)
         .overlay(alignment: .topLeading) {
             if mode == .temp {
-                Text("Temp \u{00B7} last 3h")
+                Text(live ? "Temp \u{00B7} live" : "Temp \u{00B7} last 3h")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.leading, 2)

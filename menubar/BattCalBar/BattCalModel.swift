@@ -73,6 +73,7 @@ struct TelemetryPoint: Codable, Identifiable {
 final class BattCalModel: ObservableObject {
     @Published var status: EngineStatus?
     @Published var spark: [TelemetryPoint] = []
+    @Published var liveBuffer: [TelemetryPoint] = []   // live /api/status samples, so the chart survives a pause
     @Published var engineLoaded = true
     @Published var reachable = true
     @Published var vitalIndex = 0        // advances every 5s to rotate the Live-vitals menu bar label
@@ -107,6 +108,13 @@ final class BattCalModel: ObservableObject {
                 if let a = status?.amperageMa {
                     ampHistory.append(a)
                     if ampHistory.count > 5 { ampHistory.removeFirst(ampHistory.count - 5) }
+                }
+                // Roll a live buffer of status samples so the popover chart stays populated while
+                // paused (the engine writes the telemetry CSV only while cycling). Cap ~3h at 15s.
+                if let s = status, let p = s.pct {
+                    liveBuffer.append(TelemetryPoint(ts: TelemetryPoint.parser.string(from: Date()),
+                                                     pct: Double(p), tempC: s.tempC))
+                    if liveBuffer.count > 720 { liveBuffer.removeFirst(liveBuffer.count - 720) }
                 }
             } catch {
                 reachable = false
@@ -244,16 +252,20 @@ final class BattCalModel: ObservableObject {
         flow == .steady || (flow == .charging && abs(status?.batteryW ?? 0) < 1)
     }
 
+    // Chart source: engine telemetry while cycling, else the live status buffer, so the popover
+    // keeps a chart during a pause (when the engine writes no telemetry).
+    var chartData: [TelemetryPoint] { spark.isEmpty ? liveBuffer : spark }
+
     // The header sparkline pins a flat line while the battery holds (e.g. topped at 100%). Detect a
     // flat % window so the popover can swap to a livelier temperature series instead.
     var sparkIsFlat: Bool {
-        let pcts = spark.map(\.pct)
+        let pcts = chartData.map(\.pct)
         guard let lo = pcts.min(), let hi = pcts.max() else { return false }
         return hi - lo < 2
     }
 
     // Valid temperature points for that swap (drop the 0.0 failed-ioreg-read sentinels).
-    var sparkTemps: [TelemetryPoint] { spark.filter { ($0.tempC ?? 0) > 0 } }
+    var sparkTemps: [TelemetryPoint] { chartData.filter { ($0.tempC ?? 0) > 0 } }
 
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
@@ -308,23 +320,6 @@ final class BattCalModel: ObservableObject {
 
     func openDashboard() {
         NSWorkspace.shared.open(URL(string: "https://battcal.localhost")!)
-    }
-
-    func turnEngineOff() {
-        let bootout = ["bootout", "gui/\(getuid())/\(agentLabel)"]
-        Task {
-            _ = await Task.detached { Self.run("/bin/launchctl", bootout) }.value
-            _ = await Task.detached { Self.run("/opt/homebrew/bin/batt", ["adapter", "enable"]) }.value
-            refresh()
-        }
-    }
-
-    func turnEngineOn() {
-        let bootstrap = ["bootstrap", "gui/\(getuid())", agentPlist]
-        Task {
-            _ = await Task.detached { Self.run("/bin/launchctl", bootstrap) }.value
-            refresh()
-        }
     }
 
     @discardableResult
@@ -421,7 +416,7 @@ final class BattCalModel: ObservableObject {
     // we show the mode word, not a redundant % (Apple's own icon shows that).
     func menuLabel(for style: LabelStyle) -> String? {
         if style == .iconOnly { return nil }
-        guard reachable else { return "\u{2014}" }
+        guard reachable else { return "--" }
         if activeMode == .off { return "off" }      // engine stopped: nothing live to show
         switch style {
         case .iconOnly: return nil
@@ -442,7 +437,7 @@ final class BattCalModel: ObservableObject {
     var stateLine: String {
         guard reachable else { return "BattCal server offline" }
         guard let s = status else { return "Reading battery…" }
-        if !engineLoaded { return "Off \u{2013} charging like normal" }
+        if !engineLoaded { return "Off - charging like normal" }
         if s.paused { return "Normal charging (Apple default)" }
         switch flow {
         case .charging: return "Charging to \(flowTarget ?? s.band.high)%"
