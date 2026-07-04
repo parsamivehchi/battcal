@@ -130,6 +130,7 @@ export default function App() {
   const [dayRows, setDayRows] = useState<TelemetryRow[]>([]);
   const [cycles, setCycles] = useState<CycleRow[]>([]);
   const [log, setLog] = useState<string[]>([]);
+  const [liveBuf, setLiveBuf] = useState<Pt[]>([]);
   const [hours, setHours] = useState(12);
   const [err, setErr] = useState<string | null>(null);
   const [showHow, setShowHow] = useState(false);
@@ -168,6 +169,20 @@ export default function App() {
   useEffect(() => { refreshStatus(); const id = setInterval(refreshStatus, 15000); return () => clearInterval(id); }, [refreshStatus]);
   useEffect(() => { refreshData(hours); const id = setInterval(() => refreshData(hours), 60000); return () => clearInterval(id); }, [hours, refreshData]);
 
+  // Live chart buffer. The engine writes telemetry only while cycling, so when paused the charts
+  // would go blank. /api/status reads ioreg live on every poll regardless, so mirror each sample
+  // into a small ring buffer and fall back to it when engine telemetry is empty or stale.
+  useEffect(() => {
+    if (!status || status.pct == null) return;
+    const t = status.updatedAt ? new Date(status.updatedAt).getTime() : Date.now();
+    if (!Number.isFinite(t)) return;
+    setLiveBuf((buf) => {
+      if (buf.length && buf[buf.length - 1].t === t) return buf; // same sample, skip
+      const next = buf.concat({ t, pct: status.pct as number, w: status.batteryW ?? 0, temp: pos(status.tempC), state: status.state });
+      return next.length > 240 ? next.slice(next.length - 240) : next;
+    });
+  }, [status]);
+
   // 1s countdown clock, ticking only while a throttle banner or benchmark break is on screen.
   const [now, setNow] = useState(() => Date.now());
   // Throttled only while the battery is ACTUALLY discharging (adapter cut). During an
@@ -176,25 +191,44 @@ export default function App() {
   const discharging = status?.batteryW != null && status.batteryW < -0.5;
   const breakUntilMs = status?.breakUntil != null ? status.breakUntil * 1000 : null;
   const breakActive = breakUntilMs != null && breakUntilMs > now;
+  // Tick the 1s clock only while a benchmark-break countdown is on screen. A plain drain shows a
+  // static throttle banner with no countdown, so ticking every second during it just re-rendered
+  // the whole dashboard for nothing.
   useEffect(() => {
-    if (!discharging && breakUntilMs == null) return;
+    if (breakUntilMs == null) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [discharging, breakUntilMs]);
+  }, [breakUntilMs]);
 
-  const switchMode = async (m: Mode) => {
-    await postMode(m);
+  // POST control helper: check res.ok and surface a failed action instead of silently
+  // refreshing as if it worked (a rejected pause/resume/mode/break used to look successful).
+  const doPost = useCallback(async (fn: () => Promise<Response>, label: string) => {
+    try {
+      const res = await fn();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setErr(null);
+    } catch (e) { setErr(`${label} failed: ${String(e)}`); }
     refreshStatus();
-  };
+  }, [refreshStatus]);
+
+  const switchMode = (m: Mode) => doPost(() => postMode(m), `Switch to ${m}`);
 
   const pts: Pt[] = useMemo(() => rows.map((r) => ({
     t: new Date(r.ts).getTime(), pct: r.pct, w: r.battery_W, temp: pos(r.temp_C), state: r.state,
   })).filter((p) => Number.isFinite(p.t)), [rows]);
 
-  const spanMs = useMemo(() => (pts.length > 1 ? pts[pts.length - 1].t - pts[0].t : 3600e3), [pts]);
-  const timeTicks = useMemo(() => (pts.length > 1 ? niceTimeTicks(pts[0].t, pts[pts.length - 1].t) : []), [pts]);
-  const tempScale = useMemo(() => steppedScale(pts.map((p) => p.temp ?? NaN), 0.5), [pts]);
-  const powScale = useMemo(() => steppedScale(pts.map((p) => p.w), powerStep(pts.map((p) => p.w)), { includeZero: true }), [pts]);
+  // Engine telemetry when present and fresh; otherwise the live status buffer, so the charts stay
+  // populated while paused. Mirrors the menu-bar popover live-buffer fix.
+  const chartPts = useMemo(() => {
+    const stale = !pts.length || (Date.now() - pts[pts.length - 1].t) > 120e3;
+    return stale && liveBuf.length ? liveBuf : pts;
+  }, [pts, liveBuf]);
+  const usingLiveBuf = chartPts === liveBuf && liveBuf.length > 0;
+
+  const spanMs = useMemo(() => (chartPts.length > 1 ? chartPts[chartPts.length - 1].t - chartPts[0].t : 3600e3), [chartPts]);
+  const timeTicks = useMemo(() => (chartPts.length > 1 ? niceTimeTicks(chartPts[0].t, chartPts[chartPts.length - 1].t) : []), [chartPts]);
+  const tempScale = useMemo(() => steppedScale(chartPts.map((p) => p.temp ?? NaN), 0.5), [chartPts]);
+  const powScale = useMemo(() => steppedScale(chartPts.map((p) => p.w), powerStep(chartPts.map((p) => p.w)), { includeZero: true }), [chartPts]);
 
   const powerOffset = useMemo(() => {
     const [lo, hi] = powScale.domain;
@@ -265,7 +299,9 @@ export default function App() {
     };
   }, [healthPts, status]);
 
-  const cycleScale = useMemo(() => steppedScale(healthPts.map((h) => h.cycle).concat(status?.cycles ? [status.cycles] : []), 1), [healthPts, status?.cycles]);
+  // Fit the axis to the plotted per-cycle data (do not pad up to the live odometer, which left a
+  // dead gap at the top with no line reaching it; the current count shows in the Cycles tile).
+  const cycleScale = useMemo(() => steppedScale(healthPts.map((h) => h.cycle), 1), [healthPts]);
 
   // Time to band edge at CURRENT draw (gauge math, like the OS's estimate).
   const eta = useMemo(() => {
@@ -285,6 +321,7 @@ export default function App() {
 
   const lastHealth = healthPts.at(-1);
   const meta = stateMeta(status);
+  const flow = flowOf(status);
   const band = status?.band ?? DEFAULT_BAND;
   const mode = status?.mode ?? 'longevity';
   const activeHowKey = status?.paused || status?.state === 'stopped' ? 'off' : mode;
@@ -301,11 +338,11 @@ export default function App() {
         {eta && <span className="pill" title="At current draw, from the battery gauge">~{eta.text} to {eta.targetPct}%</span>}
         <div className="spacer" />
         {status?.paused
-          ? <button className="action primary" onClick={async () => { await postResume(); refreshStatus(); }}>Resume cycling</button>
-          : <button className="action primary" onClick={async () => { await postPause(); refreshStatus(); }}>Charge full now (pause)</button>}
+          ? <button className="action primary" onClick={() => doPost(postResume, 'Resume')}>Resume cycling</button>
+          : <button className="action primary" onClick={() => doPost(postPause, 'Pause')}>Charge full now (pause)</button>}
         <div className="seg" role="group" aria-label="Theme">
           {THEMES.map((t) => (
-            <button key={t} className={themePref === t ? 'on' : ''} onClick={() => pickTheme(t)}>
+            <button key={t} className={themePref === t ? 'on' : ''} aria-pressed={themePref === t} onClick={() => pickTheme(t)}>
               {t === 'auto' ? 'Auto' : t === 'light' ? 'Light' : 'Dark'}
             </button>
           ))}
@@ -319,7 +356,7 @@ export default function App() {
           <div className="banner-text">
             <b>Benchmark break active.</b> Full speed now, calibration resumes in {fmtDur(breakUntilMs! - now)}. Run Geekbench.
           </div>
-          <button className="action" onClick={async () => { await postResume(); refreshStatus(); }}>Resume calibration now</button>
+          <button className="action" onClick={() => doPost(postResume, 'Resume')}>Resume calibration now</button>
         </div>
       ) : discharging ? (
         <div className="banner banner-warn">
@@ -328,7 +365,7 @@ export default function App() {
               ? 'BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as the battery drops.'
               : 'On battery. CPU-heavy benchmarks score lower than plugged in, and worse as the battery drops.'}
           </div>
-          <button className="action primary" onClick={async () => { await postBreak(30); refreshStatus(); }}>Benchmark break (30 min)</button>
+          <button className="action primary" onClick={() => doPost(() => postBreak(30), 'Benchmark break')}>Benchmark break (30 min)</button>
         </div>
       ) : null}
 
@@ -338,7 +375,7 @@ export default function App() {
         <div className="tile"><div className="label">Power flow</div>
           <div className="value" style={{ color: status?.batteryW ? (status.batteryW > 0 ? 'var(--diverge-pos)' : 'var(--diverge-neg)') : undefined }}>
             {status?.batteryW !== null && status?.batteryW !== undefined ? (status.batteryW > 0 ? '+' : '') + status.batteryW : '--'}<small>W</small></div>
-          <div className="sub">{status?.charging ? 'charging' : status?.plugged ? 'not charging' : 'discharging'}</div></div>
+          <div className="sub">{status == null ? '--' : flow === 'charging' ? 'charging' : flow === 'draining' ? 'discharging' : status.plugged ? 'holding (not charging)' : 'on battery'}</div></div>
         <div className="tile"><div className="label">Temperature</div><div className="value">{status?.tempC ?? '--'}<small>&deg;C</small></div>
           <div className="sub">battery pack</div></div>
         <div className="tile"><div className="label">True health</div><div className="value">{status?.rawHealthPct ?? '--'}<small>%</small></div>
@@ -352,26 +389,32 @@ export default function App() {
       <div className="filters">
         <span className="label">Range</span>
         {RANGES.map((r) => (
-          <button key={r.label} className={hours === r.hours ? 'on' : ''} onClick={() => setHours(r.hours)}>{r.label}</button>
+          <button key={r.label} className={hours === r.hours ? 'on' : ''} aria-pressed={hours === r.hours} onClick={() => setHours(r.hours)}>{r.label}</button>
         ))}
         <div className="spacer" />
         <span className="label">Mode</span>
         <div className="seg" role="group" aria-label="Mode">
-          <button className={mode === 'longevity' ? 'on' : ''} onClick={() => switchMode('longevity')} title="Cycle 10-90%, never sit at 100%">
+          <button className={mode === 'longevity' ? 'on' : ''} aria-pressed={mode === 'longevity'} onClick={() => switchMode('longevity')} title="Cycle 10-90%, never sit at 100%">
             Longevity 10-90
           </button>
-          <button className={mode === 'calibration' ? 'on' : ''} onClick={() => switchMode('calibration')} title="Full 5-100% passes to re-train the health numbers">
+          <button className={mode === 'calibration' ? 'on' : ''} aria-pressed={mode === 'calibration'} onClick={() => switchMode('calibration')} title="Full 5-100% passes to re-train the health numbers">
             Calibration 5-100
           </button>
         </div>
       </div>
+
+      {!chartPts.length ? (
+        <p className="hint" style={{ margin: '0 0 6px' }}>No live chart data yet. Readings appear within a few seconds; engine telemetry resumes when cycling is active.</p>
+      ) : usingLiveBuf ? (
+        <p className="hint" style={{ margin: '0 0 6px' }}>Live readings captured since this page opened (engine telemetry is paused; the charts resume from the engine when cycling restarts).</p>
+      ) : null}
 
       <div className="grid2">
         <div className="card">
           <h2>Battery charge</h2>
           <p className="hint">percent; shaded band = {band.low}-{band.high}% ({mode})</p>
           <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={pts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
+            <AreaChart data={chartPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <defs>
                 <linearGradient id="pctFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--series-1)" stopOpacity={0.3} />
@@ -394,7 +437,7 @@ export default function App() {
           <h2>Power flow</h2>
           <p className="hint">watts: positive = charging, negative = discharging</p>
           <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={pts} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
+            <AreaChart data={chartPts} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
               <defs>
                 <linearGradient id="wStroke" x1="0" y1="0" x2="0" y2="1">
                   <stop offset={powerOffset} stopColor="var(--diverge-pos)" />
@@ -410,7 +453,7 @@ export default function App() {
               <YAxis domain={powScale.domain} ticks={powScale.ticks} tickFormatter={(v) => `${v}`} {...axis} />
               <Tooltip content={<ChartTooltip unit=" W" />} />
               <ReferenceLine y={0} stroke="var(--baseline)" />
-              <Area type="monotone" dataKey="w" name="power" stroke="url(#wStroke)" strokeWidth={2.5} fill="url(#wFill)" dot={false} isAnimationActive={false} />
+              <Area type="monotone" dataKey="w" name="power" baseValue={0} stroke="url(#wStroke)" strokeWidth={2.5} fill="url(#wFill)" dot={false} isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -419,7 +462,7 @@ export default function App() {
           <h2>Temperature</h2>
           <p className="hint">battery pack, &deg;C</p>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={pts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
+            <LineChart data={chartPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={timeTicks} tickFormatter={(t) => fmtTimeTick(t, spanMs)} {...axis} />
               <YAxis domain={tempScale.domain} ticks={tempScale.ticks} tickFormatter={(v) => v.toFixed(1)} {...axis} />
@@ -530,7 +573,7 @@ export default function App() {
           <table className="data">
             <thead><tr><th>Completed</th><th>Mode</th><th>Band</th><th>Duration</th><th>Raw mAh</th><th>Nominal</th><th>Apple</th></tr></thead>
             <tbody>
-              {[...cycles].reverse().map((c, i) => (
+              {cycles.map((c, i) => ({ c, i })).reverse().map(({ c, i }) => (
                 <tr key={i}>
                   <td>{c.date}</td>
                   <td>{c.mode ?? '-'}</td>
@@ -548,7 +591,7 @@ export default function App() {
           <h2>Engine events</h2>
           <p className="hint">phase transitions and controls, newest first</p>
           <div className="loglines">
-            {[...log].reverse().map((l, i) => <div key={i} className={eventClass(l)}>{l}</div>)}
+            {log.map((l, i) => ({ l, i })).reverse().map(({ l, i }) => <div key={i} className={eventClass(l)}>{l}</div>)}
             {!log.length && <div>No events logged yet</div>}
           </div>
         </div>
@@ -556,7 +599,7 @@ export default function App() {
 
       <p className="footer">
         BattCal &middot; <a href="https://github.com/parsamivehchi/battcal">github.com/parsamivehchi/battcal</a>
-        &middot; engine polls every 30s, dashboard refreshes every 60s
+        &middot; engine polls every 15s, dashboard refreshes every 60s
       </p>
     </div>
   );

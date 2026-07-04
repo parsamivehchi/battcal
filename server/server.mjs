@@ -322,6 +322,10 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
+// Parse a query param as a finite number in [0, max], else fall back to def. Guards NaN
+// (e.g. Number('abc')) from silently disabling a downstream filter and returning the whole file.
+const numParam = (v, def, max) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : def; };
+
 createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
@@ -329,9 +333,9 @@ createServer((req, res) => {
     if (req.method === 'OPTIONS') return json(res, 204, {});
     if (p === '/api/health') return json(res, 200, { ok: true });
     if (p === '/api/status') return json(res, 200, status());
-    if (p === '/api/telemetry') return json(res, 200, telemetry(Number(url.searchParams.get('hours') || 24)));
+    if (p === '/api/telemetry') return json(res, 200, telemetry(numParam(url.searchParams.get('hours'), 24, 24 * 90)));
     if (p === '/api/cycles') return json(res, 200, readCsv(ns().cycles));
-    if (p === '/api/log') return json(res, 200, logTail(Number(url.searchParams.get('lines') || 120)));
+    if (p === '/api/log') return json(res, 200, logTail(numParam(url.searchParams.get('lines'), 120, 5000)));
     if (p === '/api/evidence') return json(res, 200, evidence());
     if (p === '/api/prep' && req.method === 'POST') {
       const n = ns();
