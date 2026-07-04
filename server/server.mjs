@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, extname, normalize } from 'node:path';
+import { join, extname, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.BATTCAL_DASH_PORT || 4437);
@@ -188,7 +188,7 @@ function evidence() {
   const rows = readCsv(TELEMETRY).filter((r) => typeof r.ts === 'string');
   const st = status();
   const design = st.designMah;
-  const nomV = st.rawMah && st.designMah ? 11.4 : 11.4; // MBP14 3S pack nominal ~11.4V
+  const nomV = 11.4; // MBP14 3S pack nominal ~11.4V
 
   // Discharge segments: median battery watts while draining, -> runtime estimate.
   const drain = rows.filter((r) => r.state === 'drain' && Number(r.battery_W) < 0);
@@ -234,13 +234,17 @@ function evidence() {
   // gain charge, so an unmonitored drop there is anomalous. Gaps during BattCal's own drain
   // (on battery by design) or while paused are expected and never counted, which is what made
   // the old heuristic misread ordinary sleeps as shutdowns.
+  // A telemetry gap only HINTS at an unexpected shutdown; it can never prove one. Require the engine to
+  // be in a charge/hold state at BOTH ends of the gap (adapter delivering before and after), which
+  // excludes the common false positive: unplugging and running on battery through a sleep. Even so this
+  // stays a POSSIBLE drop, not an asserted symptom (see symptomsFound below).
+  const adapterOn = (r) => r.state === 'charge' || r.state === 'hold';
   const shutdowns = [];
   for (let k = 1; k < rows.length; k++) {
     const prev = rows[k - 1], cur = rows[k];
     const gapMin = (new Date(cur.ts).getTime() - new Date(prev.ts).getTime()) / 60000;
     const dropPct = Number(prev.pct) - Number(cur.pct);
-    const adapterOn = prev.state === 'charge' || prev.state === 'hold';
-    if (gapMin > 10 && adapterOn && Number(prev.pct) > 15 && dropPct > 5) {
+    if (gapMin > 10 && adapterOn(prev) && adapterOn(cur) && Number(prev.pct) > 15 && dropPct > 5) {
       shutdowns.push({ at: prev.ts, pct: Number(prev.pct), gapMin: Math.round(gapMin), dropPct });
     }
   }
@@ -270,7 +274,11 @@ function evidence() {
     projection = { lostPct: +lostPct.toFixed(1), cyclesNow, perCycle: +perCycle.toFixed(3), designCycles };
   }
 
-  const symptomsFound = shutdowns.length > 0 || resistanceElevated;
+  // symptomsFound gates the report's "Real symptoms, lead with these" verdict, so it must reflect only
+  // MEASURED evidence. Elevated internal resistance is measured; the telemetry-gap drops above are
+  // inferred and ambiguous (could be sleeping on battery), so they are shown as possible drops but never
+  // flip this on their own. BattCal's hard rule: never assert a symptom the data cannot prove.
+  const symptomsFound = resistanceElevated;
   return {
     macos: { capacity: st.appleHealth, condition: st.condition },
     raw: { pct: st.rawHealthPct, mah: st.rawMah, designMah: st.designMah, note: 'For your records only. Apple decides on the macOS number above, not this.' },
@@ -297,7 +305,7 @@ function serveStatic(req, res) {
   let path = new URL(req.url, 'http://x').pathname;
   if (path === '/') path = '/index.html';
   const file = normalize(join(DIST, path));
-  if (!file.startsWith(DIST) || !existsSync(file) || !statSync(file).isFile()) {
+  if (!(file === DIST || file.startsWith(DIST + sep)) || !existsSync(file) || !statSync(file).isFile()) {
     // SPA fallback
     const index = join(DIST, 'index.html');
     if (existsSync(index)) {
@@ -319,7 +327,7 @@ const json = (res, code, body) => {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
   });
-  res.end(JSON.stringify(body));
+  res.end(code === 204 ? undefined : JSON.stringify(body)); // 204 must carry no body
 };
 
 // Parse a query param as a finite number in [0, max], else fall back to def. Guards NaN
@@ -362,13 +370,21 @@ createServer((req, res) => {
     }
     if (p === '/api/mode' && req.method === 'POST') {
       let body = '';
-      req.on('data', (c) => { body += c; });
+      // Cap the body: mode payloads are tiny, so an unbounded stream is only an attack surface.
+      req.on('data', (c) => { if (body.length < 1e6) body += c; });
+      // The 'end' callback runs AFTER the outer try/catch has already returned, so an unguarded throw
+      // here (e.g. writeFileSync failing on /var/tmp) would be an UNCAUGHT exception that crashes the
+      // whole server for every endpoint. Guard the body with its own try/catch.
       req.on('end', () => {
-        let m = url.searchParams.get('mode');
-        try { m = JSON.parse(body).mode || m; } catch {}
-        if (!MODES.includes(m)) return json(res, 400, { error: `mode must be one of: ${MODES.join(', ')}` });
-        writeFileSync(ns().mode, m + '\n');
-        return json(res, 200, { mode: m, band: BANDS[m] });
+        try {
+          let m = url.searchParams.get('mode');
+          try { m = JSON.parse(body).mode || m; } catch {}
+          if (!MODES.includes(m)) return json(res, 400, { error: `mode must be one of: ${MODES.join(', ')}` });
+          writeFileSync(ns().mode, m + '\n');
+          return json(res, 200, { mode: m, band: BANDS[m] });
+        } catch (e) {
+          return json(res, 500, { error: String(e?.message || e) });
+        }
       });
       return;
     }
