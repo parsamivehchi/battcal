@@ -7,6 +7,7 @@ import { Evidence, Status, endPrep, fetchEvidence, postPrep } from './api';
 export function GeniusBarPrep({ status, onChange }: { status: Status | null; onChange: () => void }) {
   const [ev, setEv] = useState<Evidence | null>(null);
   const [open, setOpen] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -26,11 +27,17 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
         <div className="genius-body">
           <div className="genius-actions no-print">
             {prepActive ? (
-              <button className="action primary" onClick={async () => { await endPrep(); onChange(); }}>
+              <button className="action primary" onClick={async () => {
+                try { const r = await endPrep(); if (!r.ok) throw new Error(`HTTP ${r.status}`); setActionErr(null); onChange(); }
+                catch (e) { setActionErr(`Stop prep failed: ${String(e)}`); }
+              }}>
                 Stop prep (back to Longevity)
               </button>
             ) : (
-              <button className="action primary" onClick={async () => { await postPrep(); onChange(); }}>
+              <button className="action primary" onClick={async () => {
+                try { const r = await postPrep(); if (!r.ok) throw new Error(`HTTP ${r.status}`); setActionErr(null); onChange(); }
+                catch (e) { setActionErr(`Start prep failed: ${String(e)}`); }
+              }}>
                 Start prep cycle
               </button>
             )}
@@ -40,6 +47,7 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
                 ? 'Prep running: full 5-100% calibration cycle. Let it finish before your appointment.'
                 : 'Run this the evening before an appointment: one full 5-100% cycle so macOS re-estimates capacity (it nudges the real number, it does not fake it).'}
             </span>
+            {actionErr && <span className="genius-hint" role="alert" style={{ color: 'var(--status-critical)' }}>{actionErr}</span>}
           </div>
 
           {/* The printable report */}
@@ -67,7 +75,7 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
               <tbody>
                 <tr><td>Estimated runtime</td><td>{ev?.runtime ? `~${ev.runtime.hours} h at ${ev.runtime.atWatts} W` : '--'}</td><td className="rn">{ev?.runtime?.note ?? ''}</td></tr>
                 <tr><td>Internal resistance</td><td>{ev?.resistanceMohm != null ? `${ev.resistanceMohm} mΩ` : '--'}</td><td className="rn">{ev?.resistanceElevated ? 'ELEVATED - a real "not functioning normally" signal' : 'within normal range'}</td></tr>
-                <tr><td>Unexpected shutdowns (&gt;15%)</td><td>{ev ? ev.shutdowns.length : '--'}</td><td className="rn">{ev && ev.shutdowns.length ? ev.shutdowns.map((s) => `${s.pct}% on ${s.at}`).join('; ') : 'none detected'}</td></tr>
+                <tr><td>Possible unmonitored drops (&gt;15%)</td><td>{ev ? ev.shutdowns.length : '--'}</td><td className="rn">{ev && ev.shutdowns.length ? ev.shutdowns.map((s) => `${s.dropPct}% drop from ${s.pct}% on ${s.at}`).join('; ') + ' (could also be sleeping on battery; shown for context, not asserted as a symptom)' : 'none detected'}</td></tr>
                 <tr><td>Battery temperature range</td><td>{ev?.tempRange ? `${ev.tempRange.min}-${ev.tempRange.max} °C` : '--'}</td><td className="rn">normal operating range</td></tr>
               </tbody>
             </table>
@@ -83,7 +91,7 @@ export function GeniusBarPrep({ status, onChange }: { status: Status | null; onC
             <h4 className="report-h">At the Genius Bar</h4>
             <div className="dodont">
               <div><div className="dd-h do">Do</div><ul>
-                <li>Lead with behavioral symptoms (runtime, shutdowns, drops).</li>
+                <li>Lead with behavioral symptoms (runtime, internal resistance, drops).</li>
                 <li>{ev?.projection ? `Cite the ${ev.projection.lostPct}%-in-${ev.projection.cyclesNow}-cycles degradation as support.` : 'Cite the measured degradation rate (shown above) as support.'}</li>
                 <li>Ask them to run the diagnostic and note the exact reading.</li>
                 <li>Ask them to log the case even if they say no today.</li>

@@ -28,6 +28,14 @@ type Flow = 'charging' | 'draining' | 'steady';
 // Actual power flow from measured battery watts (positive = charging, negative =
 // discharging). Source of truth for direction: during an idle-gate activity hold the
 // engine state is still "drain" while the adapter is re-enabled and the battery charges.
+// Parse an engine CSV timestamp ("YYYY-MM-DD HH:MM" or "...:SS") to epoch ms. Only append seconds when
+// the stamp lacks them; a full "HH:MM:SS" already parses, and blindly appending ":00" produced an
+// invalid date that silently dropped that cycle from the health charts and the 24h turnaround count.
+function csvDateMs(d: unknown): number {
+  const iso = String(d).replace(' ', 'T');
+  return new Date(/T\d{2}:\d{2}$/.test(iso) ? iso + ':00' : iso).getTime();
+}
+
 function flowOf(s: Status | null): Flow {
   if (!s) return 'steady';
   if (s.batteryW != null) {
@@ -132,7 +140,9 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [liveBuf, setLiveBuf] = useState<Pt[]>([]);
   const [hours, setHours] = useState(12);
-  const [err, setErr] = useState<string | null>(null);
+  // Per-source errors: a status-poll success must not clear a data-fetch failure, and a control-POST
+  // failure must not be wiped by the refreshStatus() that follows it. One shared string did both.
+  const [errs, setErrs] = useState<{ status?: string; data?: string; action?: string }>({});
   const [showHow, setShowHow] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>(
     () => ((localStorage.getItem('battcal-theme') as ThemePref) || 'auto'),
@@ -156,14 +166,14 @@ export default function App() {
   };
 
   const refreshStatus = useCallback(async () => {
-    try { setStatus(await fetchStatus()); setErr(null); }
-    catch (e) { setErr(String(e)); }
+    try { setStatus(await fetchStatus()); setErrs((prev) => ({ ...prev, status: undefined })); }
+    catch (e) { setErrs((prev) => ({ ...prev, status: String(e) })); }
   }, []);
   const refreshData = useCallback(async (h: number) => {
     try {
       const [t, d, c, l] = await Promise.all([fetchTelemetry(h), fetchTelemetry(24), fetchCycles(), fetchLog()]);
-      setRows(t); setDayRows(d); setCycles(c); setLog(l); setErr(null);
-    } catch (e) { setErr(String(e)); }
+      setRows(t); setDayRows(d); setCycles(c); setLog(l); setErrs((prev) => ({ ...prev, data: undefined }));
+    } catch (e) { setErrs((prev) => ({ ...prev, data: String(e) })); }
   }, []);
 
   useEffect(() => { refreshStatus(); const id = setInterval(refreshStatus, 15000); return () => clearInterval(id); }, [refreshStatus]);
@@ -195,10 +205,10 @@ export default function App() {
   // static throttle banner with no countdown, so ticking every second during it just re-rendered
   // the whole dashboard for nothing.
   useEffect(() => {
-    if (breakUntilMs == null) return;
+    if (!breakActive) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [breakUntilMs]);
+  }, [breakActive]);
 
   // POST control helper: check res.ok and surface a failed action instead of silently
   // refreshing as if it worked (a rejected pause/resume/mode/break used to look successful).
@@ -206,8 +216,8 @@ export default function App() {
     try {
       const res = await fn();
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setErr(null);
-    } catch (e) { setErr(`${label} failed: ${String(e)}`); }
+      setErrs((prev) => ({ ...prev, action: undefined }));
+    } catch (e) { setErrs((prev) => ({ ...prev, action: `${label} failed: ${String(e)}` })); }
     refreshStatus();
   }, [refreshStatus]);
 
@@ -236,7 +246,7 @@ export default function App() {
   }, [powScale]);
 
   const healthPts = useMemo(() => cycles.map((c) => ({
-    t: new Date(String(c.date).replace(' ', 'T') + ':00').getTime(),
+    t: csvDateMs(c.date),
     cycle: c.cycle_count,
     mode: c.mode ?? '-',
     raw: status?.designMah ? pos(+(100 * c.raw_mAh / status.designMah).toFixed(1)) : null,
@@ -267,9 +277,13 @@ export default function App() {
       const tc = pos(a.temp_C);
       if (tc != null) { minT = Math.min(minT, tc); maxT = Math.max(maxT, tc); }
     }
-    const turnarounds = cycles.filter((c) => Date.now() - new Date(String(c.date).replace(' ', 'T') + ':00').getTime() < 24 * 3600e3).length;
+    const turnarounds = cycles.filter((c) => Date.now() - csvDateMs(c.date) < 24 * 3600e3).length;
     const hrs = (ms: number) => (ms / 3600e3).toFixed(1);
-    return { drainH: hrs(drainMs), chargeH: hrs(chargeMs), idleH: hrs(idleMs), dischargeWh: dischargeWh.toFixed(1), minPct, maxPct, minT: Number.isFinite(minT) ? minT : null, maxT: Number.isFinite(maxT) ? maxT : null, turnarounds };
+    // Fold in the final row's pct (the loop only reads dayRows[i-1]) and guard the +/-Infinity seed from
+    // leaking to the UI (rendered "Infinity-Infinity%") when no interval had dt>0.
+    const lastPct = dayRows[dayRows.length - 1]?.pct;
+    if (typeof lastPct === 'number') { minPct = Math.min(minPct, lastPct); maxPct = Math.max(maxPct, lastPct); }
+    return { drainH: hrs(drainMs), chargeH: hrs(chargeMs), idleH: hrs(idleMs), dischargeWh: dischargeWh.toFixed(1), minPct: Number.isFinite(minPct) ? minPct : null, maxPct: Number.isFinite(maxPct) ? maxPct : null, minT: Number.isFinite(minT) ? minT : null, maxT: Number.isFinite(maxT) ? maxT : null, turnarounds };
   }, [dayRows, cycles]);
 
   // How is BattCal affecting the cycle counter and the health numbers?
@@ -349,17 +363,18 @@ export default function App() {
         </div>
       </header>
 
-      {err && <div className="err">Cannot reach the BattCal engine API: {err}</div>}
+      {errs.action && <div className="err" role="alert">{errs.action}</div>}
+      {(errs.status || errs.data) && <div className="err" role="alert">Cannot reach the BattCal engine API: {errs.status || errs.data}</div>}
 
       {breakActive ? (
-        <div className="banner banner-break">
+        <div className="banner banner-break" aria-live="polite">
           <div className="banner-text">
             <b>Benchmark break active.</b> Full speed now, calibration resumes in {fmtDur(breakUntilMs! - now)}. Run Geekbench.
           </div>
           <button className="action" onClick={() => doPost(postResume, 'Resume')}>Resume calibration now</button>
         </div>
       ) : discharging ? (
-        <div className="banner banner-warn">
+        <div className="banner banner-warn" aria-live="polite">
           <div className="banner-text">
             <b>CPU is power-throttled.</b> {status?.plugged
               ? 'BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as the battery drops.'
@@ -373,7 +388,7 @@ export default function App() {
         <div className="tile"><div className="label">Battery</div><div className="value">{status?.pct ?? '--'}<small>%</small></div>
           <div className="sub">{status?.plugged ? `plugged in (${status.adapterW}W)` : 'on battery'}</div></div>
         <div className="tile"><div className="label">Power flow</div>
-          <div className="value" style={{ color: status?.batteryW ? (status.batteryW > 0 ? 'var(--diverge-pos)' : 'var(--diverge-neg)') : undefined }}>
+          <div className="value" style={{ color: flow === 'charging' ? 'var(--diverge-pos)' : flow === 'draining' ? 'var(--diverge-neg)' : undefined }}>
             {status?.batteryW !== null && status?.batteryW !== undefined ? (status.batteryW > 0 ? '+' : '') + status.batteryW : '--'}<small>W</small></div>
           <div className="sub">{status == null ? '--' : flow === 'charging' ? 'charging' : flow === 'draining' ? 'discharging' : status.plugged ? 'holding (not charging)' : 'on battery'}</div></div>
         <div className="tile"><div className="label">Temperature</div><div className="value">{status?.tempC ?? '--'}<small>&deg;C</small></div>
@@ -466,7 +481,7 @@ export default function App() {
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} ticks={timeTicks} tickFormatter={(t) => fmtTimeTick(t, spanMs)} {...axis} />
               <YAxis domain={tempScale.domain} ticks={tempScale.ticks} tickFormatter={(v) => v.toFixed(1)} {...axis} />
-              <Tooltip content={<ChartTooltip unit=" C" />} />
+              <Tooltip content={<ChartTooltip unit=" °C" />} />
               <Line type="monotone" dataKey="temp" name="temp" stroke="var(--series-2)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
@@ -480,6 +495,7 @@ export default function App() {
             <span className="key"><span className="swatch" style={{ background: 'var(--series-2)' }} />gauge nominal{lastHealth?.nominal != null ? ` · ${lastHealth.nominal}%` : ''}</span>
             <span className="key"><span className="swatch" style={{ background: 'var(--series-3)' }} />Apple smoothed{lastHealth?.apple != null ? ` · ${lastHealth.apple}%` : ''}</span>
           </div>
+          {healthPts.length ? (
           <ResponsiveContainer width="100%" height={186}>
             <LineChart data={healthPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
@@ -492,6 +508,9 @@ export default function App() {
               <Line type="monotone" dataKey="apple" name="Apple smoothed" stroke="var(--series-3)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
+          ) : (
+            <p className="hint">No cycle snapshots yet. This chart fills in after the first completed band cycle.</p>
+          )}
         </div>
       </div>
 
@@ -499,6 +518,7 @@ export default function App() {
         <div className="card">
           <h2>Battery cycle count</h2>
           <p className="hint">the gauge's odometer; one cycle = 100% worth of discharge (a 10-90 pass adds 0.8)</p>
+          {healthPts.length ? (
           <ResponsiveContainer width="100%" height={170}>
             <LineChart data={healthPts} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
@@ -508,6 +528,9 @@ export default function App() {
               <Line type="stepAfter" dataKey="cycle" name="cycle count" stroke="var(--series-1)" strokeWidth={2.5} dot={{ r: 3.5 }} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
+          ) : (
+            <p className="hint">No cycle snapshots yet. The odometer chart fills in after the first completed band cycle.</p>
+          )}
         </div>
 
         <div className="card">
@@ -541,7 +564,7 @@ export default function App() {
             <div><b>{story.chargeH}h</b><span>charging</span></div>
             <div><b>{story.idleH}h</b><span>paused / idle</span></div>
             <div><b>{story.dischargeWh} Wh</b><span>energy discharged</span></div>
-            <div><b>{story.minPct}-{story.maxPct}%</b><span>battery range</span></div>
+            <div><b>{story.minPct ?? '--'}-{story.maxPct ?? '--'}%</b><span>battery range</span></div>
             <div><b>{story.minT ?? '--'}-{story.maxT ?? '--'}°C</b><span>temp range</span></div>
           </div>
         </div>
