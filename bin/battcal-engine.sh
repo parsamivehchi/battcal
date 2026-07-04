@@ -70,8 +70,10 @@ check_condition() {
   local c
   c=$(system_profiler SPPowerDataType 2>/dev/null | sed -n 's/.*Condition: *//p' | head -1)
   [ -z "$c" ] && return
-  if [ -n "$LAST_CONDITION" ] && [ "$c" != "$LAST_CONDITION" ]; then
-    log "battery Condition changed: $LAST_CONDITION -> $c"
+  # Alert when the Condition is (or becomes) a "service" flag. Fire on the first non-empty read too,
+  # not only on a change, so a battery already flagged when the engine starts is not missed.
+  if [ "$c" != "$LAST_CONDITION" ]; then
+    [ -n "$LAST_CONDITION" ] && log "battery Condition changed: $LAST_CONDITION -> $c"
     if echo "$c" | grep -qi 'service'; then
       osascript -e "display notification \"macOS now flags this battery: $c. Book a Genius Bar visit.\" with title \"BattCal\" sound name \"Glass\"" >/dev/null 2>&1
     fi

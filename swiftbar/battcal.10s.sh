@@ -27,18 +27,23 @@ RAW=$(echo "$IOR" | sed -n 's/^ *"AppleRawMaxCapacity" = \([0-9]*\)$/\1/p')
 DES=$(echo "$IOR" | sed -n 's/^ *"DesignCapacity" = \([0-9]*\)$/\1/p')
 CYC=$(echo "$IOR" | sed -n 's/^ *"CycleCount" = \([0-9]*\)$/\1/p')
 RAWH=""
-[ -n "$RAW" ] && [ -n "$DES" ] && RAWH=$(awk "BEGIN{printf \"%.1f\", $RAW*100/$DES}")
+[ -n "$RAW" ] && [ "${DES:-0}" -gt 0 ] && RAWH=$(awk "BEGIN{printf \"%.1f\", $RAW*100/$DES}")
 
 if launchctl print "gui/$ME_UID/$AGENT_LABEL" >/dev/null 2>&1; then AGENT=on; else AGENT=off; fi
 STATE=$(cat "$STATE_FILE" 2>/dev/null || echo "-")
 [ -f "$PAUSE_FILE" ] && STATE=paused
 [ "$AGENT" = "off" ] && STATE=stopped
 
+# Mode word for the labels (the plugin controls state; the engine owns the mode file). Without this
+# the plugin hardcoded "calibration" and mislabeled longevity mode.
+MODE=$(cat "/var/tmp/${NS}.mode" 2>/dev/null | tr -d '[:space:]')
+[ "$MODE" = "longevity" ] || [ "$MODE" = "calibration" ] || MODE=longevity
+
 case "$STATE" in
   drain)
-    if [ "$PLUGGED" = "yes" ]; then TITLE="⇣ ${PCT}%"; DESC="Draining (calibration active)"; COLOR=orange
-    else TITLE="🔌⌛ ${PCT}%"; DESC="Waiting for charger (calibration idle, normal battery use)"; COLOR=gray; fi ;;
-  charge)  TITLE="⇡ ${PCT}%"; DESC="Charging to 100% (calibration active)"; COLOR=green ;;
+    if [ "$PLUGGED" = "yes" ]; then TITLE="⇣ ${PCT}%"; DESC="Draining ($MODE active)"; COLOR=orange
+    else TITLE="🔌⌛ ${PCT}%"; DESC="Waiting for charger ($MODE idle, normal battery use)"; COLOR=gray; fi ;;
+  charge)  TITLE="⇡ ${PCT}%"; DESC="Charging ($MODE active)"; COLOR=green ;;
   hold)    TITLE="✓ ${PCT}%"; DESC="Holding at full, then next drain"; COLOR=green ;;
   paused)  TITLE="⏸ ${PCT}%"; DESC="PAUSED - normal charging, calibration on hold"; COLOR=blue ;;
   stopped) TITLE="🔋 ${PCT}%"; DESC="Calibration engine not running"; COLOR=gray ;;
