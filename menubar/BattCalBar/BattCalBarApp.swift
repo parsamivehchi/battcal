@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // carries direction, so the value line is the bare magnitude. iconOnly is glyph-only.
         let value = (style == .iconOnly) ? nil : model.menuBarValue(for: style)
         let img = menuBarImage(symbol: model.menuBarSymbol(for: style), value: value)
-        img.accessibilityDescription = model.currentVital?.label ?? "BattCal"
+        img.accessibilityDescription = model.menuBarAccessibility(for: style)
         button.image = img
         button.title = ""
     }

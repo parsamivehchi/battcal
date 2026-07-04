@@ -292,7 +292,10 @@ final class BattCalModel: ObservableObject {
 
     var activeMode: ActiveMode {
         guard reachable, engineLoaded else { return .off }
-        if status?.paused == true { return .normal }
+        // A timed benchmark break sets paused + a breakUntil epoch. Keep the underlying mode active
+        // so the selector does not read "Normal charging" while a calibration break counts down; a
+        // genuine indefinite pause (no breakUntil) is the real Normal state.
+        if status?.paused == true, status?.breakUntil == nil { return .normal }
         return status?.mode == "calibration" ? .calibration : .longevity
     }
 
@@ -339,9 +342,10 @@ final class BattCalModel: ObservableObject {
     var symbolName: String {
         guard reachable, let s = status, let pct = s.pct else { return "battery.slash" }
         if !engineLoaded { return "battery.100percent" }
-        // A real charge shows the charging glyph even while paused (Normal-mode top-up), so the
-        // header does not read "paused" while the battery is actually moving.
-        if !isFlatFlow, flow == .charging { return "battery.100percent.bolt" }
+        // A real charge shows an up-arrow (symmetric with the drain's down-arrow below), so the
+        // header does not read "paused" while charging, and does not draw a FULL battery next to a
+        // low % (the old battery.100percent.bolt ignored the level entirely).
+        if !isFlatFlow, flow == .charging { return "arrow.up.circle" }
         // A real drain shows the drain arrow, matching the menu bar and the Power tile (the level
         // is the big % right next to this glyph), never a false "paused".
         if !isFlatFlow, flow == .draining { return "arrow.down.circle" }
@@ -380,6 +384,16 @@ final class BattCalModel: ObservableObject {
         guard let t = menuLabel(for: style) else { return nil }
         for p in ["IN ", "OUT "] where t.hasPrefix(p) { return String(t.dropFirst(p.count)) }
         return t
+    }
+
+    // VoiceOver description for the menu bar item: describe what is ACTUALLY shown for this style,
+    // not always the rotating vital (currentVital), which is only on screen in .live while flat.
+    // Previously the label always announced the vital, so "Power (W)" draining at 18.8W spoke "Cycles".
+    func menuBarAccessibility(for style: LabelStyle) -> String {
+        guard reachable else { return "BattCal: server offline" }
+        if style == .live, isFlatFlow, let v = currentVital { return "BattCal: \(v.label), \(v.text)" }
+        if let v = menuBarValue(for: style), !v.isEmpty { return "BattCal: \(stateLine), \(v)" }
+        return "BattCal: \(stateLine)"
     }
 
     var titleText: String {
@@ -425,12 +439,12 @@ final class BattCalModel: ObservableObject {
         // Live vitals: rotating health/temp/cycles while flat (never a dead 0.0W), directional
         // watts while actually charging or draining.
         case .live:    return isFlatFlow ? (currentVital?.text ?? titleText) : (powerLabel ?? titleText)
-        // Directional watts in EVERY mode. This is what "Power (W)" now means, including
-        // normal mode where the label used to be a static "normal" that ignored the picker.
-        case .power:   return powerLabel ?? titleText
-        // Time-to-target when cycling; otherwise the same directional watts (never a bare
-        // percent, which macOS already shows).
-        case .eta:     return etaText ?? powerLabel ?? titleText
+        // Directional watts while power actually flows; the % when flat, never a dead "0.0W"
+        // (the readout the Live style was built to avoid). Distinct from Live, which rotates
+        // vitals when flat.
+        case .power:   return isFlatFlow ? titleText : (powerLabel ?? titleText)
+        // Time-to-target when cycling; otherwise directional watts, or the % when flat (never 0.0W).
+        case .eta:     return etaText ?? (isFlatFlow ? titleText : (powerLabel ?? titleText))
         case .percent: return titleText
         case .health:  return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
         }
@@ -440,7 +454,12 @@ final class BattCalModel: ObservableObject {
         guard reachable else { return "BattCal server offline" }
         guard let s = status else { return "Reading battery…" }
         if !engineLoaded { return "Off - charging like normal" }
-        if s.paused { return "Normal charging (Apple default)" }
+        if s.paused {
+            // A break (paused WITH a future breakUntil) is not the Normal state; the popover banner
+            // shows its live countdown, so keep this line consistent with it, not "Normal charging".
+            if let until = s.breakUntil, until > Int(Date().timeIntervalSince1970) { return "Benchmark break active" }
+            return "Normal charging (Apple default)"
+        }
         switch flow {
         case .charging: return "Charging to \(flowTarget ?? s.band.high)%"
         case .draining: return "Draining to \(s.band.low)%"
