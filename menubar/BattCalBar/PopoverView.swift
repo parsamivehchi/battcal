@@ -68,11 +68,11 @@ struct PopoverView: View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                 GridRow {
                     powerStat()
-                    stat("Temp", s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
+                    stat("Temp", "thermometer.medium", s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
                 }
                 GridRow {
-                    stat("True health", s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
-                    stat("Apple says", s?.appleHealth ?? "--")
+                    stat("True health", "heart.fill", s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
+                    stat("Apple says", "apple.logo", s?.appleHealth ?? "--")
                 }
             }
             .padding(.vertical, 2)
@@ -142,10 +142,15 @@ struct PopoverView: View {
         return parts.joined(separator: " \u{00B7} ")
     }
 
-    private func stat(_ label: String, _ value: String) -> some View {
+    // Symbol-first stat tile, matching powerStat() so the whole grid reads consistently:
+    // a leading glyph in secondary tint + the value.
+    private func stat(_ label: String, _ symbol: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-            Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(.primary)
+            HStack(spacing: 3) {
+                Image(systemName: symbol).font(.caption2).foregroundStyle(.secondary)
+                Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(.primary)
+            }
         }
         .frame(minWidth: 120, alignment: .leading)
     }

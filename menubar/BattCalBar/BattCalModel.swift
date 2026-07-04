@@ -342,8 +342,10 @@ final class BattCalModel: ObservableObject {
         // A real charge shows the charging glyph even while paused (Normal-mode top-up), so the
         // header does not read "paused" while the battery is actually moving.
         if !isFlatFlow, flow == .charging { return "battery.100percent.bolt" }
-        // The pause glyph is ONLY for a genuine hold (flat + paused). A real drain falls through to
-        // the level glyph, matching the menu bar's drain arrow, never a false "paused".
+        // A real drain shows the drain arrow, matching the menu bar and the Power tile (the level
+        // is the big % right next to this glyph), never a false "paused".
+        if !isFlatFlow, flow == .draining { return "arrow.down.circle" }
+        // The pause glyph is ONLY for a genuine hold (flat + paused).
         if isFlatFlow, s.paused { return "pause.circle" }
         switch pct {
         case ..<13: return "battery.0percent"
