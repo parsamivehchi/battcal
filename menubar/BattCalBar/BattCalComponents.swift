@@ -110,31 +110,60 @@ struct GlassActionButton: View {
     }
 }
 
-// Live battery-% chart with a soft gradient fill. Short in the popover, tall in the window.
+// Live sparkline with a soft gradient fill. Plots battery % by default; when the % window is flat
+// (topped up / holding) the popover swaps to a temperature series so the chart stays informative.
 struct LiveChart: View {
+    enum Mode { case pct, temp }
     let spark: [TelemetryPoint]
     var height: CGFloat = 56
+    var mode: Mode = .pct
+
+    private func y(_ p: TelemetryPoint) -> Double { (mode == .temp ? p.tempC : p.pct) ?? 0 }
+
+    private var yDomain: ClosedRange<Double> {
+        guard mode == .temp else { return 0...100 }
+        let ys = spark.compactMap { $0.tempC }.filter { $0 > 0 }
+        guard let lo = ys.min(), let hi = ys.max() else { return 20...40 }
+        // Pad, with a minimum span so a nearly-flat idle temp reads as a band, not a hairline.
+        let span = max(hi - lo, 5), mid = (lo + hi) / 2
+        return (mid - span / 2 - 1)...(mid + span / 2 + 1)
+    }
+
+    private var yTicks: [Double] {
+        guard mode == .temp else { return [0, 50, 100] }
+        let d = yDomain
+        return [d.lowerBound, (d.lowerBound + d.upperBound) / 2, d.upperBound].map { $0.rounded() }
+    }
+
     var body: some View {
-        Chart(spark) {
-            AreaMark(x: .value("Time", $0.date), y: .value("%", $0.pct))
+        Chart(spark) { p in
+            AreaMark(x: .value("Time", p.date), y: .value("v", y(p)))
                 .interpolationMethod(.monotone)
                 .foregroundStyle(LinearGradient(
                     colors: [Color.accentColor.opacity(0.35), Color.accentColor.opacity(0.03)],
                     startPoint: .top, endPoint: .bottom))
-            LineMark(x: .value("Time", $0.date), y: .value("%", $0.pct))
+            LineMark(x: .value("Time", p.date), y: .value("v", y(p)))
                 .interpolationMethod(.monotone)
                 .foregroundStyle(Color.accentColor)
                 .lineStyle(StrokeStyle(lineWidth: 2))
         }
-        .chartYScale(domain: 0...100)
+        .chartYScale(domain: yDomain)
         .chartXAxis(.hidden)
         .chartYAxis {
-            AxisMarks(values: [0, 50, 100]) {
+            AxisMarks(values: yTicks) {
                 AxisGridLine().foregroundStyle(Color.primary.opacity(0.08))
                 AxisValueLabel().font(.system(size: 8)).foregroundStyle(.secondary)
             }
         }
         .frame(height: height)
+        .overlay(alignment: .topLeading) {
+            if mode == .temp {
+                Text("Temp \u{00B7} last 3h")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+            }
+        }
     }
 }
 

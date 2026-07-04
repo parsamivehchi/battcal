@@ -49,7 +49,13 @@ struct PopoverView: View {
                 }
             }
 
-            if !model.spark.isEmpty { LiveChart(spark: model.spark) }
+            // While the battery holds (flat %), swap the pinned-flat % line for a livelier
+            // temperature series so the chart still says something.
+            if model.sparkIsFlat, !model.sparkTemps.isEmpty {
+                LiveChart(spark: model.sparkTemps, mode: .temp)
+            } else if !model.spark.isEmpty {
+                LiveChart(spark: model.spark)
+            }
 
             // Mode selector
             Text("MODE").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).padding(.top, 2)
@@ -61,7 +67,7 @@ struct PopoverView: View {
             // Stats grid
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                 GridRow {
-                    stat("Power", s?.batteryW.map { String(format: "%+.1f W", $0) } ?? "--")
+                    powerStat()
                     stat("Temp", s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
                 }
                 GridRow {
@@ -140,6 +146,37 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
             Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(.primary)
+        }
+        .frame(minWidth: 120, alignment: .leading)
+    }
+
+    // Compact, symbol-first Power tile: a direction glyph + bare magnitude while charging/draining
+    // (the glyph carries direction), a steady glyph + short word while flat (never a dead "+0.0W").
+    private func powerStat() -> some View {
+        let symbol: String
+        let value: String
+        if let w = s?.batteryW {
+            if model.isFlatFlow {
+                let full = (s?.pct ?? 0) >= 99
+                symbol = full ? "battery.100percent" : "pause"
+                value = full ? "Full" : "Idle"
+            } else if model.flow == .draining {
+                symbol = "arrow.down.circle"
+                value = String(format: "%.1fW", abs(w))
+            } else {
+                symbol = "bolt.fill"
+                value = String(format: "%.1fW", abs(w))
+            }
+        } else {
+            symbol = "bolt.slash"
+            value = "--"
+        }
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("POWER").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 3) {
+                Image(systemName: symbol).font(.caption2).foregroundStyle(.secondary)
+                Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(.primary)
+            }
         }
         .frame(minWidth: 120, alignment: .leading)
     }

@@ -68,13 +68,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
         let style = LabelStyle(rawValue: raw) ?? .live
-        // Always show BattCal's distinct glyph so the item reads as BattCal, not a stray number
-        // next to macOS's battery. iconOnly is glyph-only; every other style adds a compact status
-        // (rotating vitals / ETA / watts), never a bare percent that duplicates macOS.
-        button.image = NSImage(systemSymbolName: model.menuBarSymbol(for: style),
-                               accessibilityDescription: model.currentVital?.label ?? "BattCal")
-        let text = (style == .iconOnly) ? nil : model.menuLabel(for: style)
-        button.title = text.map { " \($0)" } ?? ""
+        // A compact TWO-LINE item: BattCal's distinct glyph on top, a short value below (rotating
+        // vitals / directional watts / ETA), never a bare percent that duplicates macOS. The glyph
+        // carries direction, so the value line is the bare magnitude. iconOnly is glyph-only.
+        let value = (style == .iconOnly) ? nil : model.menuBarValue(for: style)
+        let img = menuBarImage(symbol: model.menuBarSymbol(for: style), value: value)
+        img.accessibilityDescription = model.currentVital?.label ?? "BattCal"
+        button.image = img
+        button.title = ""
+    }
+
+    // Compose a compact two-line menu bar image: SF Symbol on top, short value below. Marked as a
+    // template so the menu bar owns the tint (light/dark + active/inactive); sizing to the content
+    // lets the menu bar scale it to the bar height without clipping. iconOnly => one centered glyph.
+    private func menuBarImage(symbol: String, value: String?) -> NSImage {
+        let glyphPt: CGFloat = value == nil ? 15 : 11
+        let conf = NSImage.SymbolConfiguration(pointSize: glyphPt, weight: .medium)
+        let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(conf)
+        let glyphSize = glyph?.size ?? NSSize(width: glyphPt, height: glyphPt)
+
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+        let valueStr = value.map {
+            NSAttributedString(string: $0, attributes: [.font: valueFont, .foregroundColor: NSColor.black])
+        }
+        let valueSize = valueStr?.size() ?? .zero
+
+        let vGap: CGFloat = value == nil ? 0 : 1
+        let padX: CGFloat = 2
+        let contentW = max(glyphSize.width, valueSize.width)
+        let contentH = glyphSize.height + (value == nil ? 0 : vGap + valueSize.height)
+        let size = NSSize(width: max(contentW + padX * 2, 8), height: max(contentH, 8))
+
+        let image = NSImage(size: size, flipped: false) { rect in
+            if let value = valueStr {
+                if let g = glyph {
+                    g.draw(in: NSRect(x: rect.midX - glyphSize.width / 2, y: rect.maxY - glyphSize.height,
+                                      width: glyphSize.width, height: glyphSize.height))
+                }
+                value.draw(at: NSPoint(x: rect.midX - valueSize.width / 2, y: 0))
+            } else if let g = glyph {
+                g.draw(in: NSRect(x: rect.midX - glyphSize.width / 2, y: rect.midY - glyphSize.height / 2,
+                                  width: glyphSize.width, height: glyphSize.height))
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     // The poppable coconutBattery-style window. Built once and reused (never released),

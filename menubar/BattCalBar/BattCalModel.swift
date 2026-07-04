@@ -51,7 +51,13 @@ struct EngineStatus: Codable {
 struct TelemetryPoint: Codable, Identifiable {
     var ts: String
     var pct: Double
+    var tempC: Double?          // pack temperature; the engine writes 0.0 on a failed ioreg read
     var id: String { ts }
+
+    enum CodingKeys: String, CodingKey {
+        case ts, pct
+        case tempC = "temp_C"
+    }
 
     static let parser: DateFormatter = {
         let f = DateFormatter()
@@ -238,6 +244,17 @@ final class BattCalModel: ObservableObject {
         flow == .steady || (flow == .charging && abs(status?.batteryW ?? 0) < 1)
     }
 
+    // The header sparkline pins a flat line while the battery holds (e.g. topped at 100%). Detect a
+    // flat % window so the popover can swap to a livelier temperature series instead.
+    var sparkIsFlat: Bool {
+        let pcts = spark.map(\.pct)
+        guard let lo = pcts.min(), let hi = pcts.max() else { return false }
+        return hi - lo < 2
+    }
+
+    // Valid temperature points for that swap (drop the 0.0 failed-ioreg-read sentinels).
+    var sparkTemps: [TelemetryPoint] { spark.filter { ($0.tempC ?? 0) > 0 } }
+
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
 
@@ -270,7 +287,8 @@ final class BattCalModel: ObservableObject {
     func select(_ target: ActiveMode) {
         Task {
             if !engineLoaded, target != .off {
-                _ = Self.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", agentPlist])
+                let args = ["bootstrap", "gui/\(getuid())", agentPlist]
+                _ = await Task.detached { Self.run("/bin/launchctl", args) }.value
             }
             switch target {
             case .longevity, .calibration:
@@ -293,14 +311,20 @@ final class BattCalModel: ObservableObject {
     }
 
     func turnEngineOff() {
-        _ = Self.run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(agentLabel)"])
-        _ = Self.run("/opt/homebrew/bin/batt", ["adapter", "enable"])
-        refresh()
+        let bootout = ["bootout", "gui/\(getuid())/\(agentLabel)"]
+        Task {
+            _ = await Task.detached { Self.run("/bin/launchctl", bootout) }.value
+            _ = await Task.detached { Self.run("/opt/homebrew/bin/batt", ["adapter", "enable"]) }.value
+            refresh()
+        }
     }
 
     func turnEngineOn() {
-        _ = Self.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", agentPlist])
-        refresh()
+        let bootstrap = ["bootstrap", "gui/\(getuid())", agentPlist]
+        Task {
+            _ = await Task.detached { Self.run("/bin/launchctl", bootstrap) }.value
+            refresh()
+        }
     }
 
     @discardableResult
@@ -320,8 +344,12 @@ final class BattCalModel: ObservableObject {
     var symbolName: String {
         guard reachable, let s = status, let pct = s.pct else { return "battery.slash" }
         if !engineLoaded { return "battery.100percent" }
-        if s.paused { return "pause.circle" }
-        if flow == .charging { return "battery.100percent.bolt" }
+        // A real charge shows the charging glyph even while paused (Normal-mode top-up), so the
+        // header does not read "paused" while the battery is actually moving.
+        if !isFlatFlow, flow == .charging { return "battery.100percent.bolt" }
+        // The pause glyph is ONLY for a genuine hold (flat + paused). A real drain falls through to
+        // the level glyph, matching the menu bar's drain arrow, never a false "paused".
+        if isFlatFlow, s.paused { return "pause.circle" }
         switch pct {
         case ..<13: return "battery.0percent"
         case ..<38: return "battery.25percent"
@@ -339,12 +367,22 @@ final class BattCalModel: ObservableObject {
     func menuBarSymbol(for style: LabelStyle) -> String {
         guard reachable else { return "exclamationmark.triangle" }
         if style == .live, isFlatFlow, let v = currentVital { return v.symbol }
-        if !engineLoaded || status?.paused == true { return "pause.circle" }
-        switch flow {
-        case .charging: return "bolt.fill"
-        case .draining: return "arrow.down.circle"
-        case .steady:   return "arrow.triangle.2.circlepath"
-        }
+        if !engineLoaded { return "pause.circle" }
+        // A real charge/drain wins over the paused glyph: in Normal mode the engine is paused but
+        // macOS still trickle-charges, so mark the true flow direction, never a "paused" glyph
+        // next to a live "IN/OUT" watts readout. isFlatFlow already treats a sub-1W charging
+        // trickle as flat, so only a genuine flow trips the bolt/arrow.
+        if !isFlatFlow { return flow == .draining ? "arrow.down.circle" : "bolt.fill" }
+        if status?.paused == true { return "pause.circle" }
+        return "arrow.triangle.2.circlepath"
+    }
+
+    // The menu bar's two-line image shows direction via the glyph, so the value line is the bare
+    // magnitude: strip a leading "IN "/"OUT " from the label ("IN 5.4W" -> "5.4W").
+    func menuBarValue(for style: LabelStyle) -> String? {
+        guard let t = menuLabel(for: style) else { return nil }
+        for p in ["IN ", "OUT "] where t.hasPrefix(p) { return String(t.dropFirst(p.count)) }
+        return t
     }
 
     var titleText: String {
