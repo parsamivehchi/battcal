@@ -18,6 +18,8 @@ const DIST = join(ROOT, 'dashboard', 'dist');
 
 const NAMESPACES = [
   {
+    // Personal deployment (LaunchAgent com.parsa.battery-calibrate).
+    agentLabel: 'com.parsa.battery-calibrate',
     state: '/var/tmp/battery-calibrate.state',
     pause: '/var/tmp/battery-calibrate.pause',
     mode: '/var/tmp/battery-calibrate.mode',
@@ -26,6 +28,8 @@ const NAMESPACES = [
     log: join(HOME, 'Library/Logs/battery-calibrate.log'),
   },
   {
+    // Published install (install.sh AGENT_LABEL=com.battcal.calibrate).
+    agentLabel: 'com.battcal.calibrate',
     state: '/var/tmp/battcal.state',
     pause: '/var/tmp/battcal.pause',
     mode: '/var/tmp/battcal.mode',
@@ -118,6 +122,7 @@ function status() {
     state: paused ? 'paused' : state,
     paused,
     breakUntil,
+    namespace: n.agentLabel, // launchctl agent label, so the menu bar controls the right one on any install
     mode,
     band: BANDS[mode],
     condition,

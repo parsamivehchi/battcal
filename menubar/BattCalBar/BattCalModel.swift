@@ -43,6 +43,7 @@ struct EngineStatus: Codable {
     var designCycles: Int?
     var condition: String?
     var prep: PrepInfo?
+    var namespace: String?   // launchctl agent label the server detected; nil on older servers
 
     struct Band: Codable { var low: Int; var high: Int }
     struct PrepInfo: Codable { var active: Bool; var startedAt: Double? }
@@ -82,8 +83,11 @@ final class BattCalModel: ObservableObject {
     private let base = URL(string: "http://localhost:4437")!
     private var timer: Timer?
     private var vitalTimer: Timer?
-    private let agentLabel = "com.parsa.battery-calibrate"
-    private let agentPlist = ("~/Library/LaunchAgents/com.parsa.battery-calibrate.plist" as NSString).expandingTildeInPath
+    // The launchctl agent label + plist, derived from the namespace the server reports so a published
+    // install (com.battcal.calibrate) is loaded/booted correctly; falls back to the personal label when
+    // the server is older or unreachable.
+    private var agentLabel: String { status?.namespace ?? "com.parsa.battery-calibrate" }
+    private var agentPlist: String { ("~/Library/LaunchAgents/\(agentLabel).plist" as NSString).expandingTildeInPath }
 
     init() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -96,6 +100,11 @@ final class BattCalModel: ObservableObject {
         vitalTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.vitalIndex &+= 1 }
         }
+    }
+
+    deinit {
+        timer?.invalidate()
+        vitalTimer?.invalidate()
     }
 
     func refresh() {
@@ -243,7 +252,9 @@ final class BattCalModel: ObservableObject {
 
     var currentVital: (symbol: String, text: String, label: String)? {
         let v = steadyVitals
-        return v.isEmpty ? nil : v[vitalIndex % v.count]
+        // vitalIndex wraps (&+=) and can go negative at Int.max; a plain % would then be a negative,
+        // out-of-bounds index. Normalize to a non-negative index.
+        return v.isEmpty ? nil : v[((vitalIndex % v.count) + v.count) % v.count]
     }
 
     // "Flat" = no meaningful power flow: steady, or charging at a trickle near full. Both are cases
@@ -341,23 +352,25 @@ final class BattCalModel: ObservableObject {
     // battery here; it sits next to the big % inside the popover.)
     var symbolName: String {
         guard reachable, let s = status, let pct = s.pct else { return "battery.slash" }
-        if !engineLoaded { return "battery.100percent" }
-        // A real charge shows an up-arrow (symmetric with the drain's down-arrow below), so the
-        // header does not read "paused" while charging, and does not draw a FULL battery next to a
-        // low % (the old battery.100percent.bolt ignored the level entirely).
+        // Battery glyph for the current level; used for the engine-off state and as the flat fallback,
+        // so an engine-off Mac at a low % never draws a FULL battery next to its real percentage.
+        let levelGlyph: String
+        switch pct {
+        case ..<13: levelGlyph = "battery.0percent"
+        case ..<38: levelGlyph = "battery.25percent"
+        case ..<63: levelGlyph = "battery.50percent"
+        case ..<88: levelGlyph = "battery.75percent"
+        default:    levelGlyph = "battery.100percent"
+        }
+        if !engineLoaded { return levelGlyph }
+        // A real charge shows an up-arrow (symmetric with the drain's down-arrow below), so the header
+        // does not read "paused" while charging.
         if !isFlatFlow, flow == .charging { return "arrow.up.circle" }
-        // A real drain shows the drain arrow, matching the menu bar and the Power tile (the level
-        // is the big % right next to this glyph), never a false "paused".
+        // A real drain shows the drain arrow, matching the menu bar and the Power tile.
         if !isFlatFlow, flow == .draining { return "arrow.down.circle" }
         // The pause glyph is ONLY for a genuine hold (flat + paused).
         if isFlatFlow, s.paused { return "pause.circle" }
-        switch pct {
-        case ..<13: return "battery.0percent"
-        case ..<38: return "battery.25percent"
-        case ..<63: return "battery.50percent"
-        case ..<88: return "battery.75percent"
-        default: return "battery.100percent"
-        }
+        return levelGlyph
     }
 
     // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. In the Live style, while the

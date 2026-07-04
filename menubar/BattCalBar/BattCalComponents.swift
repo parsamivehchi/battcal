@@ -36,50 +36,6 @@ extension View {
                 .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
         }
     }
-    // Liquid Glass button style, with native bordered fallback on older systems.
-    @ViewBuilder func glassButtonStyle(prominent: Bool = false, tint: Color = .accentColor) -> some View {
-        if #available(macOS 26.0, *) {
-            if prominent { self.buttonStyle(.glassProminent).tint(tint) }
-            else { self.buttonStyle(.glass).tint(tint) }
-        } else {
-            if prominent { self.buttonStyle(.borderedProminent).tint(tint) }
-            else { self.buttonStyle(.bordered).tint(tint) }
-        }
-    }
-}
-
-// Wraps grouped glass surfaces so they blend and morph (macOS 26); passthrough otherwise.
-struct GlassStack<Content: View>: View {
-    var spacing: CGFloat = 14
-    @ViewBuilder var content: Content
-    var body: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: spacing) { content }
-        } else {
-            content
-        }
-    }
-}
-
-// A grouped glass card container for the window sections.
-struct GlassCard<Content: View>: View {
-    var tint: Color? = nil
-    var padding: CGFloat = 13
-    @ViewBuilder var content: Content
-    var body: some View {
-        content
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(tint: tint)
-    }
-}
-
-// A small section caption used above grouped content.
-struct SectionLabel: View {
-    let text: String
-    var body: some View {
-        Text(text).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).tracking(0.5)
-    }
 }
 
 // A full-width tinted-fill action button for use INSIDE glass cards / banners (a solid
@@ -165,37 +121,16 @@ struct LiveChart: View {
                     .padding(.leading, 2)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mode == .temp ? "Battery temperature trend" : "Battery percentage trend")
+        .accessibilityValue(a11yValue)
     }
-}
 
-// A labelled gradient progress meter (charge / health) with an optional reference marker.
-struct MeterBar: View {
-    let label: String
-    let valueText: String
-    let fraction: Double        // 0...1
-    var tint: Color = .green
-    var marker: Double? = nil   // 0...1 position of a reference line
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(label).font(.footnote.weight(.semibold))
-                Spacer()
-                Text(valueText).font(.footnote.weight(.bold)).monospacedDigit()
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.12))
-                    Capsule()
-                        .fill(LinearGradient(colors: [tint.opacity(0.75), tint], startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(6, min(1, fraction) * geo.size.width))
-                    if let m = marker {
-                        Rectangle().fill(Color.white.opacity(0.9)).frame(width: 2)
-                            .offset(x: max(0, min(1, m)) * geo.size.width - 1)
-                    }
-                }
-            }
-            .frame(height: 9)
-        }
+    private var a11yValue: String {
+        guard let last = spark.last else { return "no data yet" }
+        let v = y(last)
+        return mode == .temp ? String(format: "latest %.0f degrees Celsius", v)
+                             : String(format: "latest %.0f percent", v)
     }
 }
 

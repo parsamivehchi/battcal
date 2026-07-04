@@ -39,11 +39,12 @@ struct PopoverView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Open the BattCal window")
+                    .accessibilityLabel("Open BattCal window")
                 }
             }
 
             // Throttle warning while draining, or a live countdown during a break.
-            if model.isDischarging || model.breakUntil != nil {
+            if model.isDischarging || model.breakRemaining() != nil {
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     PowerBanner(model: model, now: ctx.date)
                 }
@@ -127,6 +128,9 @@ struct PopoverView: View {
         .padding(14)
         .frame(width: 340)
         .fixedSize(horizontal: false, vertical: true)
+        // Re-sync the login state on appear: the popover and the window are separate instances each
+        // with their own @State, and the setting can also change in System Settings.
+        .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
     }
 
     private var subline: String {

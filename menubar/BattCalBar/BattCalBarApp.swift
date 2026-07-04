@@ -52,8 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the menu bar title in sync with the live model + chosen label style.
         model.$status.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         model.$reachable.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
-        model.$vitalIndex.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
+        // vitalIndex only affects the menu bar in the Live style while flat; redrawing on every 5s tick
+        // in other styles is wasted work.
+        model.$vitalIndex.receive(on: RunLoop.main).sink { [weak self] _ in
+            let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
+            if raw == LabelStyle.live.rawValue { self?.updateButton() }
+        }.store(in: &cancellables)
+        // Only react to the label-style default, not every UserDefaults write (the model persists
+        // notif.cycles / notif.below80 each poll, which used to redraw the menu bar for nothing).
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .map { _ in UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue }
+            .removeDuplicates()
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         updateButton()
     }
@@ -121,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // so it reopens instantly from the popover button or the Dock icon.
     func showMainWindow() {
         if popover.isShown { popover.performClose(nil) }
+        let wasVisible = mainWindow?.isVisible ?? false
         if mainWindow == nil {
             // The window is simply the menu bar popover, made persistent. Same view, same
             // look; a translucent vibrant backing so it matches the popover material.
@@ -141,6 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.setContentSize(hosting.view.fittingSize)   // fit the popover exactly, no dead space
             positionNearStatusItem(w)
             mainWindow = w
+        } else if !wasVisible, let w = mainWindow {
+            // Reopening from closed: re-anchor near the click, which may be on a different screen.
+            positionNearStatusItem(w)
         }
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
