@@ -187,9 +187,10 @@ log "=== battcal engine started (state=$STATE, mode=$LAST_MODE, battery $(pct)%)
 # Reassert adapter mode for the state we woke up in (unless paused)
 if [ ! -f "$PAUSE_FILE" ]; then
   case "$STATE" in
-    # In drain, re-cut the adapter only if the CPU is not pegged: a restart during a heavy job
-    # would otherwise drain (and throttle) for one poll until the loop re-checks load.
-    drain)        user_busy || "$BATT" adapter disable >>"$LOG" 2>&1 ;;
+    # In drain, re-cut the adapter only if plugged AND the CPU is not pegged: unplugged there is
+    # nothing to cut, and a restart during a heavy job would otherwise drain (and throttle) for one
+    # poll until the loop re-checks load.
+    drain)        if plugged && ! user_busy; then "$BATT" adapter disable >>"$LOG" 2>&1; fi ;;
     charge|hold)  "$BATT" adapter enable  >>"$LOG" 2>&1 ;;
   esac
 fi
