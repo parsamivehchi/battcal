@@ -260,13 +260,14 @@ final class BattCalModel: ObservableObject {
     }
 
     // Rotating "live vitals" for the menu bar while the battery is flat (full / holding / normal
-    // charging), where a watts readout would just read 0.0W. Cycles health -> temp -> cycles every
-    // 5s (see vitalTimer). Skips any datum the engine has not reported yet.
+    // charging), where a watts readout would just read 0.0W. Rotates true-health and cycle-count
+    // every 5s (see vitalTimer). Skips any datum the engine has not reported yet. Battery temperature
+    // is deliberately NOT shown here: it duplicated a separate menu-bar temperature app (two degree
+    // readouts). Do not re-add it. The popover still charts temperature.
     var steadyVitals: [(symbol: String, text: String, label: String)] {
         guard let s = status else { return [] }
         var v: [(String, String, String)] = []
         if let h = s.rawHealthPct { v.append(("heart.fill", String(format: "%.0f%%", h), "True health")) }
-        if let t = s.tempC { v.append(("thermometer.medium", String(format: "%.0f\u{00B0}C", t), "Temperature")) }
         if let c = s.cycles { v.append(("arrow.triangle.2.circlepath", "\(c)", "Cycles")) }
         return v
     }
