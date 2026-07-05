@@ -27,6 +27,22 @@ cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj \
   -scheme BattCalBar -configuration Release -derivedDataPath build build
 ```
 
+## Deploy
+
+`./deploy.sh` rebuilds and redeploys all live surfaces (engine, server, dashboard,
+menu bar) from the repo, verifies each with real evidence, and never changes charging.
+It detects the install (personal `battery-calibrate` vs OSS `battcal` namespace) and
+derives every path + launchctl label, so there are no hardcoded personal specifics.
+
+```sh
+./deploy.sh                 # = all: build + deploy + verify every present surface
+./deploy.sh [engine|server|dashboard|menubar|verify]
+./deploy.sh --dry-run       # print the detected install + planned actions, run nothing
+```
+
+The deployed engine copy is GENERATED from `bin/battcal-engine.sh` (single source of
+truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
+
 ## Hard-won constraints (do not regress)
 
 - `batt status` is broken on macOS 26 ("key has no data"); use only
@@ -40,9 +56,10 @@ cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj \
 - MagSafe LED hardware is amber+green only. The LED scheme signals with states
   (dark = draining, pulse = calibration); custom colors are impossible.
 - Installer must default to PAUSED; never change a user's charging on install.
-- Engines exist twice on the dev machine (repo + deployed personal copy with
-  `battery-calibrate` paths); keep both in sync when editing (see the `battcal`
-  global skill for the machine-specific recipes).
+- The engine runs from a deployed copy (personal `battery-calibrate` paths). It is
+  GENERATED from `bin/battcal-engine.sh` (the single source) by `./deploy.sh` via a
+  surgical namespace transform that leaves the shared `battcal-telemetry.csv` and
+  `~/.battcal/config` untouched. Edit ONLY `bin/battcal-engine.sh`, then `./deploy.sh`.
 
 ## Conventions
 

@@ -161,6 +161,22 @@ Opt out with `LED_SCHEME=truthful` (LED always reflects charging) or
 ./uninstall.sh --daemon   # also remove the batt system daemon
 ```
 
+## Development
+
+After editing the source, `./deploy.sh` rebuilds and redeploys every live surface
+(engine, dashboard server + SPA, menu bar app), verifies each, and never changes your
+charging. It auto-detects your install and derives all paths, so there is nothing to
+configure.
+
+```sh
+./deploy.sh                 # build + deploy + verify everything
+./deploy.sh [engine|server|dashboard|menubar|verify]
+./deploy.sh --dry-run       # show what it would do, run nothing
+```
+
+The deployed engine is generated from `bin/battcal-engine.sh` (the single source);
+edit that file, not the deployed copy.
+
 ## Credits and license
 
 - Engine, installer, and SwiftBar plugin: MIT (c) 2026 Parsa Mivehchi.
