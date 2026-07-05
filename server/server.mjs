@@ -26,6 +26,7 @@ const NAMESPACES = [
     prep: '/var/tmp/battery-calibrate.prep',
     cycles: join(HOME, 'Library/Logs/battery-calibrate-history.csv'),
     log: join(HOME, 'Library/Logs/battery-calibrate.log'),
+    onBatteryStart: '/var/tmp/battery-calibrate.onbatterystart',
   },
   {
     // Published install (install.sh AGENT_LABEL=com.battcal.calibrate).
@@ -36,6 +37,7 @@ const NAMESPACES = [
     prep: '/var/tmp/battcal.prep',
     cycles: join(HOME, 'Library/Logs/battcal-history.csv'),
     log: join(HOME, 'Library/Logs/battcal.log'),
+    onBatteryStart: '/var/tmp/battcal.onbatterystart',
   },
 ];
 const MODES = ['longevity', 'calibration'];
@@ -75,17 +77,50 @@ const signedNum = (src, key) => {
   return Number(v);
 };
 
-// Time on battery: track when the CURRENT discharge run started, in memory, from the live battery
-// watts on each poll. This works whether BattCal is cycling, paused, or off (unlike the telemetry
-// CSV, which the engine stops writing while paused). Resets if the server process restarts.
+// Time on battery: track when the CURRENT discharge run started, from the live battery watts
+// on each poll. This works whether BattCal is cycling, paused, or off (unlike the telemetry
+// CSV, which the engine stops writing while paused). The start epoch is mirrored to a marker
+// file so the count survives a server restart (the dominant cause being ./deploy.sh, which
+// kickstarts this agent). See readFreshOnBatteryStart for the staleness guard that keeps a
+// restart from adopting a PRIOR run's start.
+const ON_BATTERY_STALE_MS = 90_000; // reject a persisted start whose marker mtime is older than
+                                    // this: it means a prior discharge run or a reboot, not the
+                                    // current one. The always-on menu bar polls /api/status every
+                                    // 15s and refreshes the marker each discharge poll, so a fresh
+                                    // marker means the SAME run, briefly interrupted by a restart.
 let onBatterySince = null;
-function trackOnBattery(batteryW) {
+function trackOnBattery(batteryW, markerPath) {
   if (batteryW != null && batteryW < -0.5) {
-    if (onBatterySince == null) onBatterySince = Date.now();
-  } else {
+    if (onBatterySince == null) {
+      // Adopt a persisted start ONLY if its marker is fresh (same run, server just restarted);
+      // a stale/absent marker means this is a new run.
+      const persisted = readFreshOnBatteryStart(markerPath);
+      onBatterySince = persisted != null ? persisted : Date.now();
+    }
+    // Refresh the marker every discharge poll: mtime = liveness, content = true start (ms),
+    // so even a multi-hour run survives a restart.
+    try { writeFileSync(markerPath, String(onBatterySince) + '\n'); } catch {}
+  } else if (onBatterySince != null) {
+    // Discharge just ended: reset and clean up. (A stale marker left by a crash is cleaned
+    // lazily by readFreshOnBatteryStart on the next discharge.)
     onBatterySince = null;
+    try { if (existsSync(markerPath)) unlinkSync(markerPath); } catch {}
   }
   return onBatterySince == null ? null : +((Date.now() - onBatterySince) / 60000).toFixed(1);
+}
+
+function readFreshOnBatteryStart(markerPath) {
+  try {
+    if (!existsSync(markerPath)) return null;
+    if (Date.now() - statSync(markerPath).mtimeMs > ON_BATTERY_STALE_MS) {
+      try { unlinkSync(markerPath); } catch {} // stale: prior run / reboot
+      return null;
+    }
+    const v = Number(readFileSync(markerPath, 'utf8').trim());
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function status() {
@@ -147,7 +182,7 @@ function status() {
     adapterW: adapter ? Number(adapter[1]) : 0,
     batteryW: bW,
     amperageMa: amperage,
-    onBatteryMin: trackOnBattery(bW), // minutes in the current on-battery (discharge) run, null if not on battery
+    onBatteryMin: trackOnBattery(bW, n.onBatteryStart), // minutes in the current on-battery (discharge) run, null if not on battery
     rawCurrentMah: num(ior, 'AppleRawCurrentCapacity'),
     tempC: temp !== null ? +(temp / 100).toFixed(1) : null,
     rawMah: rawMax,
