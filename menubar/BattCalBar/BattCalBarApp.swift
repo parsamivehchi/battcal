@@ -77,9 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
         let style = LabelStyle(rawValue: raw) ?? .live
-        // A compact TWO-LINE item: BattCal's distinct glyph on top, a short value below (rotating
-        // vitals / directional watts / ETA), never a bare percent that duplicates macOS. The glyph
-        // carries direction, so the value line is the bare magnitude. iconOnly is glyph-only.
+        // A compact SINGLE-ROW item: a small BattCal glyph then a short value on the same line
+        // (signed watts, watts + time, time-left, or a rotating vital when flat), never a bare
+        // percent that duplicates macOS. The value's sign carries direction. iconOnly is glyph-only.
         let value = (style == .iconOnly) ? nil : model.menuBarValue(for: style)
         let img = menuBarImage(symbol: model.menuBarSymbol(for: style), value: value)
         img.accessibilityDescription = model.menuBarAccessibility(for: style)
@@ -87,35 +87,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.title = ""
     }
 
-    // Compose a compact two-line menu bar image: SF Symbol on top, short value below. Marked as a
-    // template so the menu bar owns the tint (light/dark + active/inactive); sizing to the content
-    // lets the menu bar scale it to the bar height without clipping. iconOnly => one centered glyph.
+    // Compose a compact SINGLE-ROW menu bar image: a small leading SF Symbol, then the value text on
+    // the same line (the value's sign carries direction). Template so the menu bar owns the tint;
+    // sized to content so it scales to the bar height without clipping. iconOnly => one glyph.
     private func menuBarImage(symbol: String, value: String?) -> NSImage {
-        let glyphPt: CGFloat = value == nil ? 15 : 11
-        let conf = NSImage.SymbolConfiguration(pointSize: glyphPt, weight: .medium)
+        let glyphPt: CGFloat = value == nil ? 15 : 12
+        let conf = NSImage.SymbolConfiguration(pointSize: glyphPt, weight: .semibold)
         let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(conf)
         let glyphSize = glyph?.size ?? NSSize(width: glyphPt, height: glyphPt)
 
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         let valueStr = value.map {
             NSAttributedString(string: $0, attributes: [.font: valueFont, .foregroundColor: NSColor.black])
         }
         let valueSize = valueStr?.size() ?? .zero
 
-        let vGap: CGFloat = value == nil ? 0 : 1
+        let gap: CGFloat = value == nil ? 0 : 3     // glyph-to-text spacing
         let padX: CGFloat = 2
-        let contentW = max(glyphSize.width, valueSize.width)
-        let contentH = glyphSize.height + (value == nil ? 0 : vGap + valueSize.height)
+        let contentW = glyphSize.width + (value == nil ? 0 : gap + valueSize.width)
+        let contentH = max(glyphSize.height, valueSize.height)
         let size = NSSize(width: max(contentW + padX * 2, 8), height: max(contentH, 8))
 
         let image = NSImage(size: size, flipped: false) { rect in
             if let value = valueStr {
                 if let g = glyph {
-                    g.draw(in: NSRect(x: rect.midX - glyphSize.width / 2, y: rect.maxY - glyphSize.height,
+                    g.draw(in: NSRect(x: padX, y: rect.midY - glyphSize.height / 2,
                                       width: glyphSize.width, height: glyphSize.height))
                 }
-                value.draw(at: NSPoint(x: rect.midX - valueSize.width / 2, y: 0))
+                value.draw(at: NSPoint(x: padX + glyphSize.width + gap, y: rect.midY - valueSize.height / 2))
             } else if let g = glyph {
                 g.draw(in: NSRect(x: rect.midX - glyphSize.width / 2, y: rect.midY - glyphSize.height / 2,
                                   width: glyphSize.width, height: glyphSize.height))

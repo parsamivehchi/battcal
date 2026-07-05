@@ -9,10 +9,10 @@ enum LabelStyle: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .live: return "Live vitals"
+        case .live: return "Watts + time"
         case .iconOnly: return "Icon only"
-        case .eta: return "Time to target"
-        case .power: return "Power (W)"
+        case .eta: return "Time left"
+        case .power: return "Watts"
         case .percent: return "Percent"
         case .health: return "True health"
         }
@@ -44,6 +44,7 @@ struct EngineStatus: Codable {
     var condition: String?
     var prep: PrepInfo?
     var namespace: String?   // launchctl agent label the server detected; nil on older servers
+    var onBatteryMin: Double?   // minutes in the current contiguous discharge run; nil when not discharging
 
     struct Band: Codable { var low: Int; var high: Int }
     struct PrepInfo: Codable { var active: Bool; var startedAt: Double? }
@@ -238,6 +239,26 @@ final class BattCalModel: ObservableObject {
         }
     }
 
+    // Signed battery watts for the menu bar: +X.XW charging, -X.XW draining (batteryW is
+    // +charging / -draining, so %+ yields the sign directly). The sign carries direction.
+    var signedWatts: String? {
+        guard let w = status?.batteryW else { return nil }
+        return String(format: "%+.1fW", w)
+    }
+
+    // Time to where the battery is heading, as H:MM (drain: to the band floor; charge: to full).
+    var timeLeftText: String? {
+        guard let (mins, _) = minutesToTarget else { return nil }
+        return String(format: "%d:%02d", mins / 60, mins % 60)
+    }
+
+    // "Watts + time" menu bar text: signed watts, plus the time-left when available.
+    var wattsPlusTime: String? {
+        guard let w = signedWatts else { return nil }
+        if let t = timeLeftText { return "\(w) \u{00B7} \(t)" }
+        return w
+    }
+
     // Rotating "live vitals" for the menu bar while the battery is flat (full / holding / normal
     // charging), where a watts readout would just read 0.0W. Cycles health -> temp -> cycles every
     // 5s (see vitalTimer). Skips any datum the engine has not reported yet.
@@ -391,12 +412,10 @@ final class BattCalModel: ObservableObject {
         return "arrow.triangle.2.circlepath"
     }
 
-    // The menu bar's two-line image shows direction via the glyph, so the value line is the bare
-    // magnitude: strip a leading "IN "/"OUT " from the label ("IN 5.4W" -> "5.4W").
+    // The menu bar value text. The signed watts / time already carry direction (plus the leading
+    // glyph), so there is no IN/OUT prefix to strip.
     func menuBarValue(for style: LabelStyle) -> String? {
-        guard let t = menuLabel(for: style) else { return nil }
-        for p in ["IN ", "OUT "] where t.hasPrefix(p) { return String(t.dropFirst(p.count)) }
-        return t
+        return menuLabel(for: style)
     }
 
     // VoiceOver description for the menu bar item: describe what is ACTUALLY shown for this style,
@@ -449,15 +468,12 @@ final class BattCalModel: ObservableObject {
         if activeMode == .off { return "off" }      // engine stopped: nothing live to show
         switch style {
         case .iconOnly: return nil
-        // Live vitals: rotating health/temp/cycles while flat (never a dead 0.0W), directional
-        // watts while actually charging or draining.
-        case .live:    return isFlatFlow ? (currentVital?.text ?? titleText) : (powerLabel ?? titleText)
-        // Directional watts while power actually flows; the % when flat, never a dead "0.0W"
-        // (the readout the Live style was built to avoid). Distinct from Live, which rotates
-        // vitals when flat.
-        case .power:   return isFlatFlow ? titleText : (powerLabel ?? titleText)
-        // Time-to-target when cycling; otherwise directional watts, or the % when flat (never 0.0W).
-        case .eta:     return etaText ?? (isFlatFlow ? titleText : (powerLabel ?? titleText))
+        // Signed watts + time-left while cycling; rotate vitals while flat (never a dead 0.0W).
+        case .live:    return isFlatFlow ? (currentVital?.text ?? titleText) : (wattsPlusTime ?? titleText)
+        // Signed watts only while cycling; rotate vitals while flat.
+        case .power:   return isFlatFlow ? (currentVital?.text ?? titleText) : (signedWatts ?? titleText)
+        // Time-left (H:MM) while cycling; rotate vitals while flat.
+        case .eta:     return isFlatFlow ? (currentVital?.text ?? titleText) : (timeLeftText ?? signedWatts ?? titleText)
         case .percent: return titleText
         case .health:  return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
         }

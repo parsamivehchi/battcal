@@ -10,6 +10,13 @@ struct PopoverView: View {
 
     private var s: EngineStatus? { model.status }
 
+    // Elapsed time in the current on-battery (discharge) run, H:MM, from the server.
+    private var onBatteryText: String {
+        guard let m = s?.onBatteryMin, m > 0 else { return "--" }
+        let mins = Int(m)
+        return String(format: "%d:%02d", mins / 60, mins % 60)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Header: big battery number + live state, with a pop-out-to-window button.
@@ -74,6 +81,10 @@ struct PopoverView: View {
                 GridRow {
                     stat("True health", "heart.fill", s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
                     stat("Apple says", "apple.logo", s?.appleHealth ?? "--")
+                }
+                GridRow {
+                    stat("Time left", "hourglass", model.timeLeftText ?? "--")
+                    stat("On battery", "battery.25percent", onBatteryText)
                 }
             }
             .padding(.vertical, 2)

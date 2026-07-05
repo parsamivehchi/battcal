@@ -75,6 +75,19 @@ const signedNum = (src, key) => {
   return Number(v);
 };
 
+// Time on battery: track when the CURRENT discharge run started, in memory, from the live battery
+// watts on each poll. This works whether BattCal is cycling, paused, or off (unlike the telemetry
+// CSV, which the engine stops writing while paused). Resets if the server process restarts.
+let onBatterySince = null;
+function trackOnBattery(batteryW) {
+  if (batteryW != null && batteryW < -0.5) {
+    if (onBatterySince == null) onBatterySince = Date.now();
+  } else {
+    onBatterySince = null;
+  }
+  return onBatterySince == null ? null : +((Date.now() - onBatterySince) / 60000).toFixed(1);
+}
+
 function status() {
   const n = ns();
   const ior = ioregBattery();
@@ -118,6 +131,7 @@ function status() {
   try {
     if (existsSync(n.prep)) prep = { active: true, startedAt: Number(readFileSync(n.prep, 'utf8').trim()) || null };
   } catch {}
+  const bW = voltage !== null && amperage !== null ? +(voltage * amperage / 1e6).toFixed(1) : null;
   return {
     state: paused ? 'paused' : state,
     paused,
@@ -131,8 +145,9 @@ function status() {
     charging,
     plugged: adapter !== null && Number(adapter[1]) > 0,
     adapterW: adapter ? Number(adapter[1]) : 0,
-    batteryW: voltage !== null && amperage !== null ? +(voltage * amperage / 1e6).toFixed(1) : null,
+    batteryW: bW,
     amperageMa: amperage,
+    onBatteryMin: trackOnBattery(bW), // minutes in the current on-battery (discharge) run, null if not on battery
     rawCurrentMah: num(ior, 'AppleRawCurrentCapacity'),
     tempC: temp !== null ? +(temp / 100).toFixed(1) : null,
     rawMah: rawMax,
