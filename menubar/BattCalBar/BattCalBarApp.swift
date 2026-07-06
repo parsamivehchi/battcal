@@ -23,9 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // One-time migration to the new Live-vitals default, so the menu bar shows rotating
-        // vitals instead of a dead 0.0W when the battery is flat. Only moves the old dynamic
-        // defaults (eta/power/unset); an explicit percent/health/icon choice is preserved.
+        // One-time migration that set the default menu bar style to Live (Watts + time). Only moved
+        // the old dynamic defaults (eta/power/unset); an explicit percent/health/icon choice is preserved.
         let defaults = UserDefaults.standard
         if !defaults.bool(forKey: "didMigrateLiveV1") {
             let cur = defaults.string(forKey: "menuLabelStyle")
@@ -52,12 +51,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the menu bar title in sync with the live model + chosen label style.
         model.$status.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         model.$reachable.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
-        // vitalIndex only affects the menu bar in the Live style while flat; redrawing on every 5s tick
-        // in other styles is wasted work.
-        model.$vitalIndex.receive(on: RunLoop.main).sink { [weak self] _ in
-            let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
-            if raw == LabelStyle.live.rawValue { self?.updateButton() }
-        }.store(in: &cancellables)
         // Only react to the label-style default, not every UserDefaults write (the model persists
         // notif.cycles / notif.below80 each poll, which used to redraw the menu bar for nothing).
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
@@ -78,8 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
         let style = LabelStyle(rawValue: raw) ?? .live
         // A compact SINGLE-ROW item: a small BattCal glyph then a short value on the same line
-        // (signed watts, watts + time, time-left, or a rotating vital when flat), never a bare
-        // percent that duplicates macOS. The value's sign carries direction. iconOnly is glyph-only.
+        // (signed watts, watts + time, or time-left while flowing; the percent when flat). The
+        // value's sign carries direction. iconOnly is glyph-only.
         let value = (style == .iconOnly) ? nil : model.menuBarValue(for: style)
         let img = menuBarImage(symbol: model.menuBarSymbol(for: style), value: value)
         img.accessibilityDescription = model.menuBarAccessibility(for: style)

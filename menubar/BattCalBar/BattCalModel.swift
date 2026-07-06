@@ -78,12 +78,10 @@ final class BattCalModel: ObservableObject {
     @Published var liveBuffer: [TelemetryPoint] = []   // live /api/status samples, so the chart survives a pause
     @Published var engineLoaded = true
     @Published var reachable = true
-    @Published var vitalIndex = 0        // advances every 5s to rotate the Live-vitals menu bar label
     private var ampHistory: [Double] = []
 
     private let base = URL(string: "http://localhost:4437")!
     private var timer: Timer?
-    private var vitalTimer: Timer?
     // The launchctl agent label + plist, derived from the namespace the server reports so a published
     // install (com.battcal.calibrate) is loaded/booted correctly; falls back to the personal label when
     // the server is older or unreachable.
@@ -96,16 +94,10 @@ final class BattCalModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
-        // Rotate the Live-vitals label (health -> temp -> cycles) on its own 5s cadence,
-        // independent of the 15s data poll.
-        vitalTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.vitalIndex &+= 1 }
-        }
     }
 
     deinit {
         timer?.invalidate()
-        vitalTimer?.invalidate()
     }
 
     func refresh() {
@@ -259,28 +251,8 @@ final class BattCalModel: ObservableObject {
         return w
     }
 
-    // Rotating "live vitals" for the menu bar while the battery is flat (full / holding / normal
-    // charging), where a watts readout would just read 0.0W. Rotates true-health and cycle-count
-    // every 5s (see vitalTimer). Skips any datum the engine has not reported yet. Battery temperature
-    // is deliberately NOT shown here: it duplicated a separate menu-bar temperature app (two degree
-    // readouts). Do not re-add it. The popover still charts temperature.
-    var steadyVitals: [(symbol: String, text: String, label: String)] {
-        guard let s = status else { return [] }
-        var v: [(String, String, String)] = []
-        if let h = s.rawHealthPct { v.append(("heart.fill", String(format: "%.0f%%", h), "True health")) }
-        if let c = s.cycles { v.append(("arrow.triangle.2.circlepath", "\(c)", "Cycles")) }
-        return v
-    }
-
-    var currentVital: (symbol: String, text: String, label: String)? {
-        let v = steadyVitals
-        // vitalIndex wraps (&+=) and can go negative at Int.max; a plain % would then be a negative,
-        // out-of-bounds index. Normalize to a non-negative index.
-        return v.isEmpty ? nil : v[((vitalIndex % v.count) + v.count) % v.count]
-    }
-
     // "Flat" = no meaningful power flow: steady, or charging at a trickle near full. Both are cases
-    // where a live wattage would read ~0.0W, so the Live style rotates vitals instead.
+    // where a live wattage would read ~0.0W, so the menu bar shows the percent instead of a dead 0.0W.
     var isFlatFlow: Bool {
         flow == .steady || (flow == .charging && abs(status?.batteryW ?? 0) < 1)
     }
@@ -288,17 +260,6 @@ final class BattCalModel: ObservableObject {
     // Chart source: engine telemetry while cycling, else the live status buffer, so the popover
     // keeps a chart during a pause (when the engine writes no telemetry).
     var chartData: [TelemetryPoint] { spark.isEmpty ? liveBuffer : spark }
-
-    // The header sparkline pins a flat line while the battery holds (e.g. topped at 100%). Detect a
-    // flat % window so the popover can swap to a livelier temperature series instead.
-    var sparkIsFlat: Bool {
-        let pcts = chartData.map(\.pct)
-        guard let lo = pcts.min(), let hi = pcts.max() else { return false }
-        return hi - lo < 2
-    }
-
-    // Valid temperature points for that swap (drop the 0.0 failed-ioreg-read sentinels).
-    var sparkTemps: [TelemetryPoint] { chartData.filter { ($0.tempC ?? 0) > 0 } }
 
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
@@ -395,14 +356,11 @@ final class BattCalModel: ObservableObject {
         return levelGlyph
     }
 
-    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. In the Live style, while the
-    // battery is flat it shows the current rotating vital's glyph (heart / thermometer / cycle).
-    // Otherwise, while actively cycling it marks FLOW DIRECTION (bolt = in, down-arrow = draining,
-    // cycle-arrows = steady). Paused or engine-off keeps the pause circle; an unreachable server
-    // shows a warning triangle. Never a second battery/percent.
+    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. While actively cycling it marks
+    // FLOW DIRECTION (bolt = in, down-arrow = draining); when flat it is the state glyph (pause when
+    // paused, else the steady cycle-arrows). An unreachable server shows a warning triangle.
     func menuBarSymbol(for style: LabelStyle) -> String {
         guard reachable else { return "exclamationmark.triangle" }
-        if style == .live, isFlatFlow, let v = currentVital { return v.symbol }
         if !engineLoaded { return "pause.circle" }
         // A real charge/drain wins over the paused glyph: in Normal mode the engine is paused but
         // macOS still trickle-charges, so mark the true flow direction, never a "paused" glyph
@@ -419,12 +377,9 @@ final class BattCalModel: ObservableObject {
         return menuLabel(for: style)
     }
 
-    // VoiceOver description for the menu bar item: describe what is ACTUALLY shown for this style,
-    // not always the rotating vital (currentVital), which is only on screen in .live while flat.
-    // Previously the label always announced the vital, so "Power (W)" draining at 18.8W spoke "Cycles".
+    // VoiceOver description for the menu bar item: describe what is ACTUALLY shown for this style.
     func menuBarAccessibility(for style: LabelStyle) -> String {
         guard reachable else { return "BattCal: server offline" }
-        if style == .live, isFlatFlow, let v = currentVital { return "BattCal: \(v.label), \(v.text)" }
         if let v = menuBarValue(for: style), !v.isEmpty { return "BattCal: \(stateLine), \(v)" }
         return "BattCal: \(stateLine)"
     }
@@ -469,12 +424,11 @@ final class BattCalModel: ObservableObject {
         if activeMode == .off { return "off" }      // engine stopped: nothing live to show
         switch style {
         case .iconOnly: return nil
-        // Signed watts + time-left while cycling; rotate vitals while flat (never a dead 0.0W).
-        case .live:    return isFlatFlow ? (currentVital?.text ?? titleText) : (wattsPlusTime ?? titleText)
-        // Signed watts only while cycling; rotate vitals while flat.
-        case .power:   return isFlatFlow ? (currentVital?.text ?? titleText) : (signedWatts ?? titleText)
-        // Time-left (H:MM) while cycling; rotate vitals while flat.
-        case .eta:     return isFlatFlow ? (currentVital?.text ?? titleText) : (timeLeftText ?? signedWatts ?? titleText)
+        // Honor the picked style while power is flowing; when flat (idle / holding) show the percent,
+        // never a dead 0.0W. The menu bar reflects the selection; it does not rotate vitals.
+        case .live:    return isFlatFlow ? titleText : (wattsPlusTime ?? titleText)
+        case .power:   return isFlatFlow ? titleText : (signedWatts ?? titleText)
+        case .eta:     return isFlatFlow ? titleText : (timeLeftText ?? signedWatts ?? titleText)
         case .percent: return titleText
         case .health:  return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
         }

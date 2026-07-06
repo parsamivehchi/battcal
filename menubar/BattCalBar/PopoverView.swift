@@ -57,11 +57,9 @@ struct PopoverView: View {
                 }
             }
 
-            // While the battery holds (flat %), swap the pinned-flat % line for a livelier
-            // temperature series so the chart still says something.
-            if model.sparkIsFlat, !model.sparkTemps.isEmpty {
-                LiveChart(spark: model.sparkTemps, mode: .temp, live: model.spark.isEmpty)
-            } else if !model.chartData.isEmpty {
+            // Battery % history. BattCal shows no temperature (a separate app covers it), so the
+            // chart no longer swaps to a temperature series when the % holds flat.
+            if !model.chartData.isEmpty {
                 LiveChart(spark: model.chartData)
             }
 
@@ -76,7 +74,7 @@ struct PopoverView: View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                 GridRow {
                     powerStat()
-                    stat("Temp", "thermometer.medium", s?.tempC.map { String(format: "%.1f \u{00B0}C", $0) } ?? "--")
+                    stat("Cycles", "arrow.triangle.2.circlepath", s?.cycles.map { "\($0)" } ?? "--")
                 }
                 GridRow {
                     stat("True health", "heart.fill", s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
@@ -177,9 +175,9 @@ struct PopoverView: View {
         let value: String
         if let w = s?.batteryW {
             if model.isFlatFlow {
-                let full = (s?.pct ?? 0) >= 99
-                symbol = full ? "battery.100percent" : "pause"
-                value = full ? "Full" : "Idle"
+                // POWER is a flow field, not a charge level: show "Idle" (no power flowing), never "Full".
+                symbol = "pause"
+                value = "Idle"
             } else if model.flow == .draining {
                 symbol = "arrow.down.circle"
                 value = String(format: "%.1fW", abs(w))
