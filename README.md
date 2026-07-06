@@ -24,12 +24,17 @@ stays plugged in, so both the gauge and macOS re-learn the battery's true capaci
 ## What it looks like
 
 ```
-menu bar:   ⇣ 27%          draining (calibration active)
-            ⇡ 78%          charging back to 100%
-            ✓ 100%         holding at full
-            ⏸ 55%          paused - normal charging
-            🔌⌛ 45%        unplugged - calibration idle
+menu bar (icon-only by default, so it stays clean):
+   [band glyph]    idle / holding - a battery-block mark, no redundant %
+   ⚡ +38W · 1:12   charging - watts + time to full
+   ⇣ -22W          draining in calibration
+   ⏸               paused - normal charging
+   ⚠               server unreachable
 ```
+
+Left-click opens the popover; right-click the menu bar item cycles the readout
+(icon only -> watts + time -> time-left -> watts -> true health). macOS already
+shows the charge %, so BattCal never repeats it.
 
 One click on **⚡ Charge Now** pauses everything and charges at full speed. One click on
 **▶ Resume Calibration** picks the cycle back up. Every completed cycle appends a row to
@@ -67,7 +72,7 @@ Calibration converges on the truth, in whichever direction the truth lies.
 - **Plugged-in-only:** the engine detects the physical charger via `AdapterDetails` in
   the SMC (which survives the software cut, unlike `ExternalConnected`). Unplug and it
   instantly restores normal charging behavior and stops blocking sleep until AC returns.
-- A **native SwiftUI menu bar app** (`menubar/`, macOS 14+) shows a live battery glyph plus a configurable readout (time-to-target, watts, percent, or true health), a 3h sparkline, mode switcher, and one-click pause/off. Build: `cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj -scheme BattCalBar -configuration Release -derivedDataPath build build`, then copy `BattCalBar.app` to /Applications. A lighter **SwiftBar plugin** (`swiftbar/`) remains for anyone who prefers it; run one or the other, not both.
+- A **native SwiftUI menu bar app** (`menubar/`, macOS 14+) shows a state-aware battery-block glyph plus an optional readout you right-click to cycle (icon only, watts + time, time-left, watts, or true health), a 3h sparkline, mode switcher, and one-click pause/off. Get it prebuilt from [Releases](https://github.com/parsamivehchi/battcal/releases) (no Xcode needed), or build it: `cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj -scheme BattCalBar -configuration Release -derivedDataPath build build`, then copy `BattCalBar.app` to /Applications. A lighter **SwiftBar plugin** (`swiftbar/`) remains for anyone who prefers it; run one or the other, not both.
 - A **web dashboard** (`dashboard/` + `server/`) with live charts: battery %, power flow, temperature, and health-per-cycle, band shading, cycle table, event log, mode/pause controls, and an Auto/Light/Dark theme that follows the system appearance.
 - Survives reboots. Pause state is a file (`/var/tmp/battcal.pause`), so anything can
   toggle it: the menu bar, a Shortcut, cron, or you.
@@ -85,6 +90,18 @@ cd battcal
 The installer asks for your password once (the batt daemon is a system service).
 **BattCal installs paused**: nothing about your charging changes until you click
 **Resume Calibration** in the menu bar (or `rm /var/tmp/battcal.pause`).
+
+### Prebuilt menu bar app (no Xcode)
+
+Prefer not to build the Swift app? Download `BattCalBar.app` from the
+[latest release](https://github.com/parsamivehchi/battcal/releases/latest), unzip it, and
+move it to `/Applications`. It is ad-hoc signed (not notarized), so clear the download
+quarantine once: `xattr -dr com.apple.quarantine /Applications/BattCalBar.app` (or
+right-click the app, Open, Open). The app is the front-end for the engine + dashboard, so
+run `./install.sh` above for the backend either way.
+
+Maintainer: `./deploy.sh release vX.Y.Z` builds, ad-hoc signs, zips, and publishes the
+release (`--dry-run` previews the artifact without publishing).
 
 ## Controls
 

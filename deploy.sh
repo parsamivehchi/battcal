@@ -5,14 +5,18 @@
 # under TCC). This script rebuilds and redeploys any/all surfaces, verifies each with real
 # evidence, and NEVER changes the user's charging state.
 #
-# Usage: ./deploy.sh [all|engine|server|dashboard|menubar|verify] [--dry-run]
+# Usage: ./deploy.sh [all|engine|server|dashboard|menubar|verify|release] [vX.Y.Z] [--dry-run]
 #   all (default)  build + deploy + verify every present surface
 #   engine         regenerate + deploy the engine (from bin/battcal-engine.sh)
 #   server         deploy server + dashboard (they ship together)
 #   dashboard      alias for server (the two are coupled)
 #   menubar        build + codesign + install the menu bar app
 #   verify         run all verification checks, deploy nothing
-#   --dry-run      print the detected install + planned actions, execute nothing
+#   release        build + ad-hoc sign + zip the menu bar app, publish a GitHub Release
+#                  (ad-hoc / unnotarized; the release notes carry the Gatekeeper unlock).
+#                  Version = the vX.Y.Z arg, else the app's MARKETING_VERSION.
+#   --dry-run      print planned actions, execute nothing (for release: build + zip +
+#                  verify the artifact locally, print the release, but do NOT publish)
 #
 # The engine's deployed copy is GENERATED from bin/battcal-engine.sh by a surgical namespace
 # substitution: bin/battcal-engine.sh is the single source of truth. Do NOT hand-edit the
@@ -25,12 +29,14 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UID_NUM="$(id -u)"
 DRY=0
 CMD=""
+REL_VERSION=""
 
 for a in "$@"; do
   case "$a" in
     --dry-run) DRY=1 ;;
-    all|engine|server|dashboard|menubar|verify) CMD="$a" ;;
-    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    all|engine|server|dashboard|menubar|verify|release) CMD="$a" ;;
+    v[0-9]*) REL_VERSION="$a" ;;
+    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown arg: $a (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -157,6 +163,31 @@ verify_serverdash() {
   if curl -s --max-time 4 "$APP_URL/api/status" 2>/dev/null | grep -q '"namespace"'; then pass "/api/status live (namespace present)"; else fail "/api/status not returning fields"; fi
 }
 
+# ---- shared menu-bar build: Release build -> provenance-free stage -> ad-hoc sign -> strict verify.
+# Sets STAGED_APP to the staged .app path on success; returns 1 (and calls fail) on any failure.
+# The caller owns "$STAGED_APP" and must rm -rf "$(dirname "$STAGED_APP")" when done.
+STAGED_APP=""
+build_staged_app() {
+  STAGED_APP=""
+  local xclog built stage
+  xclog="$(mktemp)"
+  if ! ( cd "$REPO/menubar" && xattr -cr . && xcodegen >/dev/null && \
+         xcodebuild -project BattCalBar.xcodeproj -scheme BattCalBar -configuration Release \
+                    -derivedDataPath build CODE_SIGNING_ALLOWED=NO build >"$xclog" 2>&1 ); then
+    fail "xcodebuild failed (log: $xclog)"; tail -5 "$xclog" | sed 's/^/    /'; return 1
+  fi
+  rm -f "$xclog"
+  built="$REPO/menubar/build/Build/Products/Release/BattCalBar.app"
+  if [ ! -d "$built" ]; then fail "build product missing: $built"; return 1; fi
+  stage="$(mktemp -d)/BattCalBar.app"
+  ditto --norsrc --noextattr --noacl "$built" "$stage"
+  codesign --force --deep --sign - "$stage" >/dev/null 2>&1
+  if ! codesign --verify --strict "$stage" >/dev/null 2>&1; then
+    fail "codesign --verify --strict failed on staged app"; rm -rf "$(dirname "$stage")"; return 1
+  fi
+  STAGED_APP="$stage"
+}
+
 # ---- menu bar: build + codesign dance + rollback-safe swap ----
 deploy_menubar() {
   step "menu bar -> /Applications/BattCalBar.app"
@@ -166,22 +197,8 @@ deploy_menubar() {
     say "  [dry] quit app; mv /Applications aside; ditto stage -> /Applications; open; verify; rollback on failure"
     return 0
   fi
-  local xclog built stage backup
-  xclog="$(mktemp)"
-  if ! ( cd "$REPO/menubar" && xattr -cr . && xcodegen >/dev/null && \
-         xcodebuild -project BattCalBar.xcodeproj -scheme BattCalBar -configuration Release \
-                    -derivedDataPath build CODE_SIGNING_ALLOWED=NO build >"$xclog" 2>&1 ); then
-    fail "xcodebuild failed (log: $xclog)"; tail -5 "$xclog" | sed 's/^/    /'; return 0
-  fi
-  rm -f "$xclog"
-  built="$REPO/menubar/build/Build/Products/Release/BattCalBar.app"
-  if [ ! -d "$built" ]; then fail "build product missing: $built"; return 0; fi
-  stage="$(mktemp -d)/BattCalBar.app"
-  ditto --norsrc --noextattr --noacl "$built" "$stage"
-  codesign --force --deep --sign - "$stage" >/dev/null 2>&1
-  if ! codesign --verify --strict "$stage" >/dev/null 2>&1; then
-    fail "codesign --verify --strict failed on staged app; /Applications left untouched"; rm -rf "$(dirname "$stage")"; return 0
-  fi
+  build_staged_app || return 0
+  local stage="$STAGED_APP" backup
   osascript -e 'quit app "BattCalBar"' >/dev/null 2>&1 || true; pkill -x BattCalBar 2>/dev/null || true; sleep 1
   backup=""
   if [ -d /Applications/BattCalBar.app ]; then backup="$(mktemp -d)/BattCalBar.app"; mv /Applications/BattCalBar.app "$backup"; fi
@@ -198,6 +215,59 @@ deploy_menubar() {
     if [ -n "$backup" ]; then mv "$backup" /Applications/BattCalBar.app; open /Applications/BattCalBar.app 2>/dev/null || true; fi
     rm -rf "$(dirname "$stage")"
   fi
+}
+
+# ---- release: build a signed, zipped app and publish a GitHub Release (free / unnotarized path) ----
+do_release() {
+  step "release -> GitHub Release  (build + ad-hoc sign + zip$([ "$DRY" = 1 ] && printf ' ; PREVIEW, no publish'))"
+  if ! command -v gh >/dev/null 2>&1; then fail "gh CLI not found (brew install gh)"; return 0; fi
+  if ! ( cd "$REPO" && gh auth status ) >/dev/null 2>&1; then fail "gh not authenticated (run: gh auth login)"; return 0; fi
+  build_staged_app || return 0
+  local stage="$STAGED_APP" stagedir; stagedir="$(dirname "$stage")"
+  local ver="$REL_VERSION"
+  if [ -z "$ver" ]; then
+    local mv; mv="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$stage/Contents/Info.plist" 2>/dev/null || true)"
+    [ -n "$mv" ] && ver="v$mv"
+  fi
+  if [ -z "$ver" ]; then fail "no version; pass one, e.g. ./deploy.sh release v1.0.0"; rm -rf "$stagedir"; return 0; fi
+  local arch; arch="$(lipo -archs "$stage/Contents/MacOS/BattCalBar" 2>/dev/null | tr ' ' '-' || echo arm64)"
+  local zipdir zip; zipdir="$(mktemp -d)"; zip="$zipdir/BattCalBar-$ver-macos-$arch.zip"
+  ditto -c -k --keepParent "$stage" "$zip"
+  say "  packaged: $(basename "$zip") ($(du -h "$zip" | cut -f1 | tr -d ' '))"
+  # Verify the artifact end to end: unzip a fresh copy and strict-verify the bundle.
+  local vd; vd="$(mktemp -d)"; ditto -x -k "$zip" "$vd"
+  if codesign --verify --strict "$vd/BattCalBar.app" >/dev/null 2>&1; then pass "release artifact codesign --verify --strict"; else fail "release artifact failed strict verify"; rm -rf "$stagedir" "$zipdir" "$vd"; return 0; fi
+  rm -rf "$vd"
+  local notes; notes="$(mktemp)"
+  cat > "$notes" <<EOF
+BattCal - battery band-cycler menu bar app for Apple Silicon Macs.
+
+## Install
+1. Download \`$(basename "$zip")\` below and unzip it.
+2. Move \`BattCalBar.app\` into \`/Applications\`.
+3. This build is ad-hoc signed (not notarized), so on first launch macOS Gatekeeper
+   blocks it. Clear the download quarantine once:
+   \`\`\`sh
+   xattr -dr com.apple.quarantine /Applications/BattCalBar.app
+   \`\`\`
+   (or right-click the app in Finder, choose Open, then Open). It launches normally after that.
+4. See the README to set up the engine + dashboard.
+
+Requires an Apple Silicon Mac ($arch).
+EOF
+  if [ "$DRY" = 1 ]; then
+    say "  [dry] would publish: gh release create $ver <zip> --title \"BattCal $ver\" --notes-file <notes>"
+    say "  ${DIM}--- release notes preview ---${RESET}"; sed 's/^/  /' "$notes"
+    rm -f "$notes"; rm -rf "$stagedir" "$zipdir"; return 0
+  fi
+  if ( cd "$REPO" && gh release view "$ver" ) >/dev/null 2>&1; then
+    if ( cd "$REPO" && gh release upload "$ver" "$zip" --clobber ); then pass "updated release asset on $ver"; else fail "gh release upload failed"; fi
+  else
+    if ( cd "$REPO" && gh release create "$ver" "$zip" --title "BattCal $ver" --notes-file "$notes" ); then pass "published GitHub Release $ver"; else fail "gh release create failed"; fi
+  fi
+  local url; url="$( cd "$REPO" && gh release view "$ver" --json url -q .url 2>/dev/null || true)"
+  [ -n "$url" ] && say "  release: $url"
+  rm -f "$notes"; rm -rf "$stagedir" "$zipdir"
 }
 
 verify_menubar() {
@@ -217,6 +287,7 @@ case "$CMD" in
   engine)            deploy_engine ;;
   server|dashboard)  deploy_serverdash ;;
   menubar)           deploy_menubar ;;
+  release)           do_release ;;
   all)
     deploy_engine
     if [ "$have_dash" = 1 ]; then deploy_serverdash; else warn "no dashboard install detected; skipping server/dashboard"; fi
@@ -225,6 +296,8 @@ case "$CMD" in
   verify) : ;;
 esac
 
+# release self-verifies the artifact inline; the surface checks below do not apply to it.
+if [ "$CMD" != release ]; then
 step "verification"
 case "$CMD" in
   engine)            verify_engine ;;
@@ -236,8 +309,9 @@ case "$CMD" in
     [ "$have_menubar" = 1 ] && verify_menubar || true
     ;;
 esac
+fi
 
-if [ "$DRY" = 0 ] && [ "$CMD" != verify ]; then
+if [ "$DRY" = 0 ] && [ "$CMD" != verify ] && [ "$CMD" != release ]; then
   AFTER="$(capture_state)"
   if [ "$BEFORE" = "$AFTER" ]; then pass "BattCal state unchanged (paused/mode = $AFTER)"; else warn "BattCal state changed by deploy: $BEFORE -> $AFTER (a deploy must not alter charging)"; fi
 fi
