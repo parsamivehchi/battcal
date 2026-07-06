@@ -31,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if cur == nil || cur == "eta" || cur == "power" { defaults.set("live", forKey: "menuLabelStyle") }
             defaults.set(true, forKey: "didMigrateLiveV1")
         }
+        // V2: the menu bar now defaults to the cool icon-only glyph (no redundant %). Flip anyone still
+        // on a dynamic / percent / live default to iconOnly once; an explicit health / iconOnly pick stays.
+        if !defaults.bool(forKey: "didMigrateIconV2") {
+            let cur = defaults.string(forKey: "menuLabelStyle")
+            if cur == nil || cur == "live" || cur == "eta" || cur == "power" || cur == "percent" {
+                defaults.set("iconOnly", forKey: "menuLabelStyle")
+            }
+            defaults.set(true, forKey: "didMigrateIconV2")
+        }
         // Proper app: Dock icon + cmd-tab, in addition to the menu bar item.
         NSApp.setActivationPolicy(.regular)
 
@@ -39,7 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
             button.imagePosition = .imageLeading
             button.target = self
-            button.action = #selector(togglePopover)
+            button.action = #selector(handleClick)
+            // Left-click opens the popover; right-click (or control-click) cycles the label style.
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         popover.behavior = .transient
@@ -54,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only react to the label-style default, not every UserDefaults write (the model persists
         // notif.cycles / notif.below80 each poll, which used to redraw the menu bar for nothing).
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-            .map { _ in UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue }
+            .map { _ in UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.iconOnly.rawValue }
             .removeDuplicates()
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
         updateButton()
@@ -68,8 +79,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateButton() {
         guard let button = statusItem.button else { return }
-        let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.live.rawValue
-        let style = LabelStyle(rawValue: raw) ?? .live
+        let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.iconOnly.rawValue
+        let style = LabelStyle(rawValue: raw) ?? .iconOnly
         // A compact SINGLE-ROW item: a small BattCal glyph then a short value on the same line
         // (signed watts, watts + time, or time-left while flowing; the percent when flat). The
         // value's sign carries direction. iconOnly is glyph-only.
@@ -163,7 +174,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    @objc private func togglePopover() {
+    // The status-item button fires on both mouse-up events (see sendAction above): left-click opens
+    // the popover, right-click (or control-click) cycles the menu bar style.
+    @objc private func handleClick() {
+        let ev = NSApp.currentEvent
+        let secondary = ev?.type == .rightMouseUp || (ev?.modifierFlags.contains(.control) ?? false)
+        if secondary { cycleStyle() } else { togglePopover() }
+    }
+
+    // Advance the menu bar to the next label style (wrapping) and persist it; a brief tooltip names
+    // the style so a cycle is legible. The pick sticks across restarts.
+    private func cycleStyle() {
+        let all = LabelStyle.allCases
+        let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.iconOnly.rawValue
+        let cur = LabelStyle(rawValue: raw) ?? .iconOnly
+        let idx = all.firstIndex(of: cur) ?? -1
+        let next = all[(idx + 1) % all.count]
+        UserDefaults.standard.set(next.rawValue, forKey: "menuLabelStyle")
+        statusItem.button?.toolTip = "BattCal: \(next.title)"
+        updateButton()
+    }
+
+    private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)

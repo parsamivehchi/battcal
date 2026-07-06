@@ -66,31 +66,15 @@ struct GlassActionButton: View {
     }
 }
 
-// Live sparkline with a soft gradient fill. Plots battery % by default; when the % window is flat
-// (topped up / holding) the popover swaps to a temperature series so the chart stays informative.
+// Live sparkline with a soft gradient fill. Plots battery % over the telemetry window, or the live
+// status buffer while paused (so the chart survives a pause when the engine writes no telemetry).
 struct LiveChart: View {
-    enum Mode { case pct, temp }
     let spark: [TelemetryPoint]
     var height: CGFloat = 56
-    var mode: Mode = .pct
-    var live: Bool = false   // true when fed by the live status buffer (paused), not the 3h telemetry window
 
-    private func y(_ p: TelemetryPoint) -> Double { (mode == .temp ? p.tempC : p.pct) ?? 0 }
-
-    private var yDomain: ClosedRange<Double> {
-        guard mode == .temp else { return 0...100 }
-        let ys = spark.compactMap { $0.tempC }.filter { $0 > 0 }
-        guard let lo = ys.min(), let hi = ys.max() else { return 20...40 }
-        // Pad, with a minimum span so a nearly-flat idle temp reads as a band, not a hairline.
-        let span = max(hi - lo, 5), mid = (lo + hi) / 2
-        return (mid - span / 2 - 1)...(mid + span / 2 + 1)
-    }
-
-    private var yTicks: [Double] {
-        guard mode == .temp else { return [0, 50, 100] }
-        let d = yDomain
-        return [d.lowerBound, (d.lowerBound + d.upperBound) / 2, d.upperBound].map { $0.rounded() }
-    }
+    private func y(_ p: TelemetryPoint) -> Double { p.pct }
+    private let yDomain: ClosedRange<Double> = 0...100
+    private let yTicks: [Double] = [0, 50, 100]
 
     var body: some View {
         Chart(spark) { p in
@@ -113,24 +97,14 @@ struct LiveChart: View {
             }
         }
         .frame(height: height)
-        .overlay(alignment: .topLeading) {
-            if mode == .temp {
-                Text(live ? "Temp \u{00B7} live" : "Temp \u{00B7} last 3h")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 2)
-            }
-        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(mode == .temp ? "Battery temperature trend" : "Battery percentage trend")
+        .accessibilityLabel("Battery percentage trend")
         .accessibilityValue(a11yValue)
     }
 
     private var a11yValue: String {
         guard let last = spark.last else { return "no data yet" }
-        let v = y(last)
-        return mode == .temp ? String(format: "latest %.0f degrees Celsius", v)
-                             : String(format: "latest %.0f percent", v)
+        return String(format: "latest %.0f percent", y(last))
     }
 }
 
@@ -141,7 +115,7 @@ struct ModeSelector: View {
         VStack(spacing: 6) {
             row(.longevity, "arrow.triangle.2.circlepath", "Longevity", "Cycle 10-90%, never sits at full", .green)
             row(.calibration, "gauge.with.needle", "Calibration", "Full 5-100% passes, re-learns health", .orange)
-            row(.normal, "bolt.fill", "Normal charging", "Apple's default: charges to 100%", .blue)
+            row(.normal, "pause.circle", "Normal charging", "Apple's default: charges to 100%", .blue)
         }
     }
     private func row(_ mode: BattCalModel.ActiveMode, _ icon: String, _ title: String, _ subtitle: String, _ tint: Color) -> some View {

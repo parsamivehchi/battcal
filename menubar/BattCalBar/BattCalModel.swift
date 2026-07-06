@@ -5,7 +5,7 @@ import UserNotifications
 // What the menu bar label shows next to the battery glyph. macOS already has
 // its own percent readout, so the smart default is time-to-target.
 enum LabelStyle: String, CaseIterable, Identifiable {
-    case live, iconOnly, eta, power, percent, health
+    case live, iconOnly, eta, power, health
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -13,7 +13,6 @@ enum LabelStyle: String, CaseIterable, Identifiable {
         case .iconOnly: return "Icon only"
         case .eta: return "Time left"
         case .power: return "Watts"
-        case .percent: return "Percent"
         case .health: return "True health"
         }
     }
@@ -33,7 +32,6 @@ struct EngineStatus: Codable {
     var amperageMa: Double?
     var rawCurrentMah: Double?
     var rawMah: Double?
-    var tempC: Double?
     var rawHealthPct: Double?
     var appleHealth: String?
     var cycles: Int?
@@ -53,12 +51,10 @@ struct EngineStatus: Codable {
 struct TelemetryPoint: Codable, Identifiable {
     var ts: String
     var pct: Double
-    var tempC: Double?          // pack temperature; the engine writes 0.0 on a failed ioreg read
     var id: String { ts }
 
     enum CodingKeys: String, CodingKey {
         case ts, pct
-        case tempC = "temp_C"
     }
 
     static let parser: DateFormatter = {
@@ -115,7 +111,7 @@ final class BattCalModel: ObservableObject {
                 // paused (the engine writes the telemetry CSV only while cycling). Cap ~3h at 15s.
                 if let s = status, let p = s.pct {
                     liveBuffer.append(TelemetryPoint(ts: TelemetryPoint.parser.string(from: Date()),
-                                                     pct: Double(p), tempC: s.tempC))
+                                                     pct: Double(p)))
                     if liveBuffer.count > 720 { liveBuffer.removeFirst(liveBuffer.count - 720) }
                 }
             } catch {
@@ -356,9 +352,10 @@ final class BattCalModel: ObservableObject {
         return levelGlyph
     }
 
-    // Menu bar glyph: DISTINCT from macOS's battery icon on purpose. While actively cycling it marks
-    // FLOW DIRECTION (bolt = in, down-arrow = draining); when flat it is the state glyph (pause when
-    // paused, else the steady cycle-arrows). An unreachable server shows a warning triangle.
+    // Menu bar glyph: the BattCal brand mark, DISTINCT from macOS's plain battery icon on purpose.
+    // The band-cycler emblem (a battery block with plus/minus) is the resting look; while power
+    // actually flows it marks FLOW DIRECTION (bolt-block = charging, down-arrow = draining); a genuine
+    // hold shows the pause glyph. An unreachable server shows a warning triangle.
     func menuBarSymbol(for style: LabelStyle) -> String {
         guard reachable else { return "exclamationmark.triangle" }
         if !engineLoaded { return "pause.circle" }
@@ -366,9 +363,9 @@ final class BattCalModel: ObservableObject {
         // macOS still trickle-charges, so mark the true flow direction, never a "paused" glyph
         // next to a live "IN/OUT" watts readout. isFlatFlow already treats a sub-1W charging
         // trickle as flat, so only a genuine flow trips the bolt/arrow.
-        if !isFlatFlow { return flow == .draining ? "arrow.down.circle" : "bolt.fill" }
+        if !isFlatFlow { return flow == .draining ? "arrow.down.circle" : "bolt.batteryblock.fill" }
         if status?.paused == true { return "pause.circle" }
-        return "arrow.triangle.2.circlepath"
+        return "minus.plus.batteryblock.fill"
     }
 
     // The menu bar value text. The signed watts / time already carry direction (plus the leading
@@ -416,21 +413,22 @@ final class BattCalModel: ObservableObject {
         return "\(t)→\(target)%"
     }
 
-    // Menu bar text (no glyph unless the style is iconOnly). When not cycling
-    // we show the mode word, not a redundant % (Apple's own icon shows that).
+    // Menu bar text drawn next to the glyph (iconOnly and idle flow-views draw the glyph alone).
+    // macOS already shows the charge %, so we NEVER echo it here: the flow views collapse to the
+    // glyph when flat, and True health is CAPACITY (not charge), so it is not redundant.
     func menuLabel(for style: LabelStyle) -> String? {
         if style == .iconOnly { return nil }
         guard reachable else { return "--" }
         if activeMode == .off { return "off" }      // engine stopped: nothing live to show
         switch style {
+        // Flow views: the live reading while power flows; at idle collapse to the glyph only (nil),
+        // never the redundant charge % that Apple's own menu bar icon already shows.
+        case .live:    return isFlatFlow ? nil : wattsPlusTime
+        case .power:   return isFlatFlow ? nil : signedWatts
+        case .eta:     return isFlatFlow ? nil : (timeLeftText ?? signedWatts)
+        // True health is measured capacity vs design, distinct from the charge %, so always show it.
+        case .health:  return status?.rawHealthPct.map { String(format: "%.1f%%", $0) }
         case .iconOnly: return nil
-        // Honor the picked style while power is flowing; when flat (idle / holding) show the percent,
-        // never a dead 0.0W. The menu bar reflects the selection; it does not rotate vitals.
-        case .live:    return isFlatFlow ? titleText : (wattsPlusTime ?? titleText)
-        case .power:   return isFlatFlow ? titleText : (signedWatts ?? titleText)
-        case .eta:     return isFlatFlow ? titleText : (timeLeftText ?? signedWatts ?? titleText)
-        case .percent: return titleText
-        case .health:  return status?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? titleText
         }
     }
 
