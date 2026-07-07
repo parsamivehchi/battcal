@@ -71,17 +71,19 @@ struct PopoverView: View {
             }
 
             // Stats grid
+            // Grouped by theme: live flow (row 1), the two health readings side by side for the
+            // core comparison (row 2), then the lifetime / elapsed counters (row 3).
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                 GridRow {
                     powerStat()
-                    stat("Cycles", "arrow.triangle.2.circlepath", s?.cycles.map { "\($0)" } ?? "--")
+                    stat("Time left", "hourglass", model.timeLeftText ?? "--")
                 }
                 GridRow {
                     stat("True health", "heart.fill", s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
                     stat("Apple says", "apple.logo", s?.appleHealth ?? "--")
                 }
                 GridRow {
-                    stat("Time left", "hourglass", model.timeLeftText ?? "--")
+                    stat("Cycles", "arrow.triangle.2.circlepath", s?.cycles.map { "\($0)" } ?? "--")
                     stat("On battery", "battery.25percent", onBatteryText)
                 }
             }
@@ -144,7 +146,7 @@ struct PopoverView: View {
 
     private var subline: String {
         var parts: [String] = []
-        parts.append(s?.plugged == true ? "Plugged in \u{00B7} \(s?.adapterW ?? 0) W adapter" : "On battery")
+        parts.append(s?.plugged == true ? "Plugged in \u{00B7} \(s?.adapterW ?? 0) W adapter" : "Cycling resumes when plugged in")
         if let (mins, target) = model.minutesToTarget {
             let t = mins >= 60 ? "\(mins / 60)h \(mins % 60)m" : "\(mins)m"
             parts.append("~\(t) until \(target)% at current draw")

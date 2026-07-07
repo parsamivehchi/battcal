@@ -282,6 +282,9 @@ final class BattCalModel: ObservableObject {
 
     var activeMode: ActiveMode {
         guard reachable, engineLoaded else { return .off }
+        // Unplugged: cycling is suspended but the user's configured mode still stands. Never report
+        // "Normal charging" here - nothing charges on battery, so highlight the real mode instead.
+        if status?.plugged == false { return status?.mode == "calibration" ? .calibration : .longevity }
         // A timed benchmark break sets paused + a breakUntil epoch. Keep the underlying mode active
         // so the selector does not read "Normal charging" while a calibration break counts down; a
         // genuine indefinite pause (no breakUntil) is the real Normal state.
@@ -436,6 +439,9 @@ final class BattCalModel: ObservableObject {
         guard reachable else { return "BattCal server offline" }
         guard let s = status else { return "Reading battery…" }
         if !engineLoaded { return "Off - charging like normal" }
+        // Unplugged: the Mac runs on battery and discharges. It is NOT "Normal charging" (nothing is
+        // charging); BattCal auto-suspends cycling until AC returns.
+        if s.plugged == false { return "On battery" }
         if s.paused {
             // A break (paused WITH a future breakUntil) is not the Normal state; the popover banner
             // shows its live countdown, so keep this line consistent with it, not "Normal charging".

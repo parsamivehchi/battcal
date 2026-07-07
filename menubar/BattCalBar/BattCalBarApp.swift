@@ -81,9 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let raw = UserDefaults.standard.string(forKey: "menuLabelStyle") ?? LabelStyle.iconOnly.rawValue
         let style = LabelStyle(rawValue: raw) ?? .iconOnly
-        // A compact SINGLE-ROW item: a small BattCal glyph then a short value on the same line
-        // (signed watts, watts + time, or time-left while flowing; the percent when flat). The
-        // value's sign carries direction. iconOnly is glyph-only.
+        // The menu bar shows ONE thing: the value alone when a value-style has a live reading
+        // (its sign carries direction, so a leading glyph would be redundant), else the glyph
+        // alone (icon-only, or any style while flat/idle).
         let value = (style == .iconOnly) ? nil : model.menuBarValue(for: style)
         let img = menuBarImage(symbol: model.menuBarSymbol(for: style), value: value)
         img.accessibilityDescription = model.menuBarAccessibility(for: style)
@@ -91,39 +91,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.title = ""
     }
 
-    // Compose a compact SINGLE-ROW menu bar image: a small leading SF Symbol, then the value text on
-    // the same line (the value's sign carries direction). Template so the menu bar owns the tint;
-    // sized to content so it scales to the bar height without clipping. iconOnly => one glyph.
+    // Render the menu bar item as EITHER the value text alone OR the glyph alone (never both, so a
+    // signed reading like "-19.1W" never sits next to a redundant direction glyph). Template so the
+    // menu bar owns the tint; sized to content so it scales to the bar height without clipping.
     private func menuBarImage(symbol: String, value: String?) -> NSImage {
-        let glyphPt: CGFloat = value == nil ? 15 : 12
-        let conf = NSImage.SymbolConfiguration(pointSize: glyphPt, weight: .semibold)
-        let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(conf)
-        let glyphSize = glyph?.size ?? NSSize(width: glyphPt, height: glyphPt)
-
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        let valueStr = value.map {
-            NSAttributedString(string: $0, attributes: [.font: valueFont, .foregroundColor: NSColor.black])
-        }
-        let valueSize = valueStr?.size() ?? .zero
-
-        let gap: CGFloat = value == nil ? 0 : 3     // glyph-to-text spacing
         let padX: CGFloat = 2
-        let contentW = glyphSize.width + (value == nil ? 0 : gap + valueSize.width)
-        let contentH = max(glyphSize.height, valueSize.height)
-        let size = NSSize(width: max(contentW + padX * 2, 8), height: max(contentH, 8))
-
-        let image = NSImage(size: size, flipped: false) { rect in
-            if let value = valueStr {
-                if let g = glyph {
-                    g.draw(in: NSRect(x: padX, y: rect.midY - glyphSize.height / 2,
-                                      width: glyphSize.width, height: glyphSize.height))
-                }
-                value.draw(at: NSPoint(x: padX + glyphSize.width + gap, y: rect.midY - valueSize.height / 2))
-            } else if let g = glyph {
-                g.draw(in: NSRect(x: rect.midX - glyphSize.width / 2, y: rect.midY - glyphSize.height / 2,
-                                  width: glyphSize.width, height: glyphSize.height))
+        if let value {
+            let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+            let str = NSAttributedString(string: value, attributes: [.font: font, .foregroundColor: NSColor.black])
+            let vs = str.size()
+            let size = NSSize(width: max(vs.width + padX * 2, 8), height: max(vs.height, 8))
+            let image = NSImage(size: size, flipped: false) { rect in
+                str.draw(at: NSPoint(x: padX, y: rect.midY - vs.height / 2))
+                return true
             }
+            image.isTemplate = true
+            return image
+        }
+        let conf = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(conf)
+        let gs = glyph?.size ?? NSSize(width: 15, height: 15)
+        let size = NSSize(width: max(gs.width + padX * 2, 8), height: max(gs.height, 8))
+        let image = NSImage(size: size, flipped: false) { rect in
+            glyph?.draw(in: NSRect(x: rect.midX - gs.width / 2, y: rect.midY - gs.height / 2, width: gs.width, height: gs.height))
             return true
         }
         image.isTemplate = true
