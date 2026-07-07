@@ -14,8 +14,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.parsa.battcalbar
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "2"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSUIElement: NO
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "BattCal reads your current Wi-Fi network name so it can cycle the battery only on your home networks, never in public."
