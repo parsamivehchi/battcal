@@ -282,12 +282,10 @@ final class BattCalModel: ObservableObject {
 
     var activeMode: ActiveMode {
         guard reachable, engineLoaded else { return .off }
-        // Unplugged: cycling is suspended but the user's configured mode still stands. Never report
-        // "Normal charging" here - nothing charges on battery, so highlight the real mode instead.
-        if status?.plugged == false { return status?.mode == "calibration" ? .calibration : .longevity }
-        // A timed benchmark break sets paused + a breakUntil epoch. Keep the underlying mode active
-        // so the selector does not read "Normal charging" while a calibration break counts down; a
-        // genuine indefinite pause (no breakUntil) is the real Normal state.
+        // paused == true reliably means the user chose Normal - the engine never sets the pause file
+        // on unplug (unplug suspends cycling in memory only), so honor it regardless of plug state.
+        // A timed benchmark break (paused WITH a breakUntil epoch) is NOT Normal: keep the underlying
+        // cycling mode active so the selector does not read "Normal charging" while a break counts down.
         if status?.paused == true, status?.breakUntil == nil { return .normal }
         return status?.mode == "calibration" ? .calibration : .longevity
     }

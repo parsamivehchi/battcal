@@ -146,7 +146,13 @@ struct PopoverView: View {
 
     private var subline: String {
         var parts: [String] = []
-        parts.append(s?.plugged == true ? "Plugged in \u{00B7} \(s?.adapterW ?? 0) W adapter" : "Cycling resumes when plugged in")
+        if s?.plugged == true {
+            parts.append("Plugged in \u{00B7} \(s?.adapterW ?? 0) W adapter")
+        } else if s?.paused == true {
+            parts.append("Normal charging when plugged in")   // user chose Normal; on battery now
+        } else {
+            parts.append("Cycling resumes when plugged in")
+        }
         if let (mins, target) = model.minutesToTarget {
             let t = mins >= 60 ? "\(mins / 60)h \(mins % 60)m" : "\(mins)m"
             parts.append("~\(t) until \(target)% at current draw")
