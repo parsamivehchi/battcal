@@ -37,6 +37,11 @@ MODE_FILE=/var/tmp/battcal.mode
 HOLD_FILE=/var/tmp/battcal.holdstart
 CYCLE_FILE=/var/tmp/battcal.cyclestart
 CAFF_PID_FILE=/var/tmp/battcal.caffeinate.pid
+# Home-only cycling gate, published by the menu bar app. These fixed paths are intentionally OUTSIDE
+# the namespaced "/var/tmp/battcal." family (the app is a single binary, not namespace-transformed).
+HOMEGATE_FLAG="$HOME/.battcal/homegate.on"   # exists => the "only cycle on home Wi-Fi" gate is ON
+ATHOME_FILE=/var/tmp/battcal-athome          # app writes "1|0" + a unix ts; stale/missing => away
+ATHOME_MAX_AGE=90                            # seconds; an older signal is treated as away (fail-safe)
 LOG="$HOME/Library/Logs/battcal.log"
 CSV="$HOME/Library/Logs/battcal-history.csv"
 TELEMETRY="$HOME/Library/Logs/battcal-telemetry.csv"
@@ -91,6 +96,19 @@ is_charging() { pmset -g batt | grep -q '; charging;'; }
 # software-cut, but AdapterDetails keeps the real charger info (Watts>0) either way.
 plugged() {
   ioreg -rn AppleSmartBattery | grep '"AdapterDetails"' | grep -qE '"Watts"=[1-9]'
+}
+
+# Home-only cycling gate. Cycling is allowed when the gate is OFF, or ON and the menu bar app has
+# RECENTLY confirmed we are on a home Wi-Fi network. A missing or stale signal counts as AWAY
+# (fail-safe: never drain in public). Plug state is enforced separately by plugged().
+home_ok() {
+  [ -f "$HOMEGATE_FLAG" ] || return 0            # gate off => cycle anywhere
+  [ -f "$ATHOME_FILE" ] || return 1              # gate on, no signal yet => away
+  local mtime age
+  mtime=$(stat -f %m "$ATHOME_FILE" 2>/dev/null || echo 0)
+  age=$(( $(date +%s) - mtime ))
+  [ "$age" -le "$ATHOME_MAX_AGE" ] || return 1   # stale signal => away
+  [ "$(head -1 "$ATHOME_FILE" 2>/dev/null)" = "1" ]
 }
 
 # Hold the adapter (full plugged-in performance) ONLY when the CPU is genuinely pegged by
@@ -190,7 +208,7 @@ if [ ! -f "$PAUSE_FILE" ]; then
     # In drain, re-cut the adapter only if plugged AND the CPU is not pegged: unplugged there is
     # nothing to cut, and a restart during a heavy job would otherwise drain (and throttle) for one
     # poll until the loop re-checks load.
-    drain)        if plugged && ! user_busy; then "$BATT" adapter disable >>"$LOG" 2>&1; fi ;;
+    drain)        if plugged && home_ok && ! user_busy; then "$BATT" adapter disable >>"$LOG" 2>&1; fi ;;
     charge|hold)  "$BATT" adapter enable  >>"$LOG" 2>&1 ;;
   esac
 fi
@@ -277,6 +295,7 @@ while true; do
         fi
         reason=""
         if ! plugged; then reason="charger unplugged"
+        elif ! home_ok; then reason="away from home"
         elif [ "$load_hold" -eq 1 ]; then reason="CPU pegged (heavy job)"
         fi
         if [ -n "$reason" ]; then
