@@ -187,6 +187,11 @@ final class BattCalModel: ObservableObject {
     // "drain" but the adapter is re-enabled, so gate on real power flow, not the label.
     var isDischarging: Bool { reachable && engineLoaded && (status?.batteryW ?? 0) < -0.5 }
 
+    // BattCal is DELIBERATELY draining (adapter cut while plugged in), as opposed to the Mac simply
+    // running on battery when unplugged. The CPU-throttle warning only makes sense for the former;
+    // when you are merely unplugged, being on battery is normal, not something BattCal did.
+    var isCyclingDrain: Bool { isDischarging && status?.plugged == true }
+
     // Actual power flow right now, from measured battery watts (positive = charging,
     // negative = discharging). This is the SOURCE OF TRUTH for every readout: during an
     // idle-gate activity hold the engine state is still "drain" while the adapter is
@@ -238,6 +243,21 @@ final class BattCalModel: ObservableObject {
     var timeLeftText: String? {
         guard let (mins, _) = minutesToTarget else { return nil }
         return String(format: "%d:%02d", mins / 60, mins % 60)
+    }
+
+    // Estimated time until the battery is EMPTY at the current draw. Uses the live median discharge
+    // current, so it tracks whatever you are doing right now (heavy Claude Code / compute drains
+    // faster, idle drains slower). Only meaningful while actually discharging.
+    var batteryLeftText: String? {
+        guard reachable, flow == .draining, let cur = status?.rawCurrentMah, cur > 0 else { return nil }
+        let amps = ampHistory.sorted()
+        guard !amps.isEmpty else { return nil }
+        let amp = abs(amps[amps.count / 2])   // median magnitude (mA), smooths bursty load
+        guard amp > 50 else { return nil }
+        let mins = cur / amp * 60             // mAh / mA = hours, x60 = minutes
+        guard mins.isFinite, mins > 0, mins < 48 * 60 else { return nil }
+        let m = Int(mins)
+        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
     }
 
     // "Watts + time" menu bar text: signed watts, plus the time-left when available.

@@ -3,12 +3,30 @@ import ServiceManagement
 
 struct PopoverView: View {
     @ObservedObject var model: BattCalModel
+    @ObservedObject var wifi: WiFiMonitor
     var onPopOut: () -> Void = {}
     var inWindow: Bool = false   // true when hosted in the standalone window (no pop-out button)
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.iconOnly.rawValue
 
     private var s: EngineStatus? { model.status }
+
+    // "Time left" to the cycle target while cycling; "Battery left" (time to empty at the current
+    // draw) while running on battery; else "--".
+    private var timeTile: (label: String, value: String) {
+        if let t = model.timeLeftText { return ("Time left", t) }
+        if let b = model.batteryLeftText { return ("Battery left", b) }
+        return ("Time left", "--")
+    }
+
+    // Phase-1 Wi-Fi status (polished in Phase 3 into the home-cycling status + editor).
+    private var wifiStatusLine: String {
+        switch wifi.auth {
+        case .notDetermined: return "Wi-Fi: grant location to read the network"
+        case .denied, .restricted: return "Wi-Fi: location denied - can't read network"
+        default: return "Wi-Fi: \(wifi.ssid ?? "not connected")"
+        }
+    }
 
     // Elapsed time in the current on-battery (discharge) run, H:MM, from the server.
     private var onBatteryText: String {
@@ -51,7 +69,7 @@ struct PopoverView: View {
             }
 
             // Throttle warning while draining, or a live countdown during a break.
-            if model.isDischarging || model.breakRemaining() != nil {
+            if model.isCyclingDrain || model.breakRemaining() != nil {
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     PowerBanner(model: model, now: ctx.date)
                 }
@@ -76,7 +94,7 @@ struct PopoverView: View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                 GridRow {
                     powerStat()
-                    stat("Time left", "hourglass", model.timeLeftText ?? "--")
+                    stat(timeTile.label, "hourglass", timeTile.value)
                 }
                 GridRow {
                     stat("True health", "heart.fill", s?.rawHealthPct.map { String(format: "%.1f%%", $0) } ?? "--")
@@ -108,6 +126,16 @@ struct PopoverView: View {
             Divider()
 
             VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi").font(.caption2).foregroundStyle(.secondary)
+                    Text(wifiStatusLine).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if wifi.auth == .notDetermined {
+                        Button("Grant") { wifi.requestAuth() }.font(.caption)
+                    } else if wifi.auth == .denied || wifi.auth == .restricted {
+                        Button("Settings") { wifi.openLocationSettings() }.font(.caption)
+                    }
+                }
                 HStack(spacing: 6) {
                     Text("Menu bar shows").font(.caption).foregroundStyle(.secondary)
                     Picker("", selection: $labelStyleRaw) {

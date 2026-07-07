@@ -154,13 +154,12 @@ struct PowerBanner: View {
                    title: "Benchmark break active",
                    message: "Full speed now. Resumes calibration in \(fmt(remaining)). Run Geekbench.",
                    actionTitle: "Resume calibration now") { model.resume() }
-        } else if model.isDischarging {
-            let onBattery = model.status?.plugged != true
+        } else if model.isCyclingDrain {
+            // Only while BattCal deliberately cuts the adapter to drain (plugged-in cycling). When the
+            // Mac is simply unplugged, being on battery is normal - no BattCal throttle warning.
             banner(tint: .orange, icon: "exclamationmark.triangle.fill",
                    title: "CPU is power-throttled",
-                   message: onBattery
-                       ? "On battery. CPU-heavy benchmarks score lower than plugged in, and worse as the battery drops."
-                       : "BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as % drops.",
+                   message: "BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as % drops.",
                    actionTitle: "Benchmark break (30 min)") { model.benchmarkBreak(minutes: 30) }
         }
     }

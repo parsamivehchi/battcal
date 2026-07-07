@@ -17,6 +17,7 @@ struct BattCalBarApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = BattCalModel()
+    private let wifi = WiFiMonitor()
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var mainWindow: NSWindow?
@@ -56,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = NSHostingController(
-            rootView: PopoverView(model: model, onPopOut: { [weak self] in self?.showMainWindow() })
+            rootView: PopoverView(model: model, wifi: wifi, onPopOut: { [weak self] in self?.showMainWindow() })
         )
 
         // Keep the menu bar title in sync with the live model + chosen label style.
@@ -128,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mainWindow == nil {
             // The window is simply the menu bar popover, made persistent. Same view, same
             // look; a translucent vibrant backing so it matches the popover material.
-            let content = PopoverView(model: model, inWindow: true)
+            let content = PopoverView(model: model, wifi: wifi, inWindow: true)
                 .background(VisualEffectView().ignoresSafeArea())
             let hosting = NSHostingController(rootView: content)
             let w = NSWindow(contentViewController: hosting)
