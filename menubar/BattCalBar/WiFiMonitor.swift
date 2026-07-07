@@ -15,9 +15,30 @@ final class WiFiMonitor: NSObject, ObservableObject {
     private let cw = CWWiFiClient.shared()
     private let loc = CLLocationManager()
     private var timer: Timer?
-    // Phase-1 de-risk debug file: lets us confirm the read from outside the app. (Path is transform-
-    // safe: deploy.sh only rewrites the "/var/tmp/battcal." prefix, not "battcal-".)
-    private let debugFile = "/var/tmp/battcal-wifi.ssid"
+
+    // --- Home detection config (edited in Settings; the engine reads the published gate files) ---
+    static let defaultHomeSSIDs = "BMP_ENGINEERING,BMP_FIBER"
+    // The current SSID, for outside-the-app verification (transform-safe path: deploy.sh only rewrites
+    // the "/var/tmp/battcal." prefix, not "battcal-").
+    private let ssidFile = "/var/tmp/battcal-wifi.ssid"
+    // Live gate the engine consumes: "1|0 <unix ts>" (freshness-guarded engine-side).
+    private let gateStatusFile = "/var/tmp/battcal-athome"
+    // Persistent opt-in flag (survives reboot); the engine only gates cycling when this exists.
+    private let gateEnabledFlag = ("~/.battcal/homegate.on" as NSString).expandingTildeInPath
+
+    var homeSSIDs: [String] {
+        (UserDefaults.standard.string(forKey: "homeSSIDs") ?? Self.defaultHomeSSIDs)
+            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    var homeGateEnabled: Bool { UserDefaults.standard.object(forKey: "homeGateEnabled") as? Bool ?? true }
+
+    // Cycling allowed? Gate off => always. Gate on => the current SSID must be a known home network;
+    // an unknown network or an unread SSID counts as AWAY (fail-safe: never cycle unless confirmed home).
+    var atHome: Bool {
+        guard homeGateEnabled else { return true }
+        guard let s = ssid, !s.isEmpty else { return false }
+        return homeSSIDs.contains(s)
+    }
 
     override init() {
         ssid = nil
@@ -51,9 +72,28 @@ final class WiFiMonitor: NSObject, ObservableObject {
     func read() {
         let s = cw.interface()?.ssid()
         if s != ssid { ssid = s }
-        // Phase-1 verification breadcrumb: SSID + unix timestamp.
+        // SSID breadcrumb (outside-the-app verification) + the engine gate files.
         let line = "\(s ?? "")\n\(Int(Date().timeIntervalSince1970))\nauth=\(auth.rawValue)\n"
-        try? line.write(toFile: debugFile, atomically: true, encoding: .utf8)
+        try? line.write(toFile: ssidFile, atomically: true, encoding: .utf8)
+        publishGate()
+        objectWillChange.send()   // pick up config edits (home list / toggle) in observing views
+    }
+
+    // Call after the user edits home config in Settings so the gate files + UI update immediately.
+    func configChanged() { read() }
+
+    // Publish the home gate for the engine: a persistent opt-in flag + a live at-home status line.
+    private func publishGate() {
+        let fm = FileManager.default
+        if homeGateEnabled {
+            try? fm.createDirectory(atPath: (gateEnabledFlag as NSString).deletingLastPathComponent,
+                                    withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: gateEnabledFlag) { fm.createFile(atPath: gateEnabledFlag, contents: nil) }
+        } else if fm.fileExists(atPath: gateEnabledFlag) {
+            try? fm.removeItem(atPath: gateEnabledFlag)
+        }
+        let gate = "\(atHome ? 1 : 0)\n\(Int(Date().timeIntervalSince1970))\n"
+        try? gate.write(toFile: gateStatusFile, atomically: true, encoding: .utf8)
     }
 }
 

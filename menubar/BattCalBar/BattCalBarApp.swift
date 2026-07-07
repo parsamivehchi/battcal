@@ -10,14 +10,14 @@ struct BattCalBarApp: App {
         // AppDelegate (AppKit) so the popover anchors precisely under the menu bar item
         // and the window gets standard native chrome. This is a proper app (Dock icon +
         // cmd-tab) PLUS a menu bar item, like coconutBattery.
-        Settings { EmptyView() }
+        Settings { SettingsView(model: appDelegate.model, wifi: appDelegate.wifi) }
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let model = BattCalModel()
-    private let wifi = WiFiMonitor()
+    let model = BattCalModel()
+    let wifi = WiFiMonitor()
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var mainWindow: NSWindow?

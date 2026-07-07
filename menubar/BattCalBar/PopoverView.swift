@@ -6,8 +6,6 @@ struct PopoverView: View {
     @ObservedObject var wifi: WiFiMonitor
     var onPopOut: () -> Void = {}
     var inWindow: Bool = false   // true when hosted in the standalone window (no pop-out button)
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.iconOnly.rawValue
 
     private var s: EngineStatus? { model.status }
 
@@ -19,13 +17,20 @@ struct PopoverView: View {
         return ("Time left", "--")
     }
 
-    // Phase-1 Wi-Fi status (polished in Phase 3 into the home-cycling status + editor).
-    private var wifiStatusLine: String {
-        switch wifi.auth {
-        case .notDetermined: return "Wi-Fi: grant location to read the network"
-        case .denied, .restricted: return "Wi-Fi: location denied - can't read network"
-        default: return "Wi-Fi: \(wifi.ssid ?? "not connected")"
-        }
+    // Compact home-cycling status for the popover footer (full control lives in Settings > Home Cycling).
+    private var homeStatusLine: String {
+        if !wifi.authorized { return "Home cycling: grant location in Settings" }
+        guard let s = wifi.ssid, !s.isEmpty else { return "Away (no Wi-Fi) \u{00B7} charging normally" }
+        return wifi.atHome ? "\(s) \u{00B7} cycling here" : "\(s) \u{00B7} away, charging normally"
+    }
+    private var homeIcon: String { (wifi.atHome && wifi.authorized) ? "house.fill" : "house" }
+    private var homeColor: Color { (wifi.atHome && wifi.authorized) ? .green : .secondary }
+
+    // Open the standard macOS Settings window from this AppKit-hosted popover (SettingsLink does not
+    // resolve inside an NSHostingController). showSettingsWindow: is the macOS 14+ responder action.
+    private func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 
     // Elapsed time in the current on-battery (discharge) run, H:MM, from the server.
@@ -126,50 +131,24 @@ struct PopoverView: View {
             Divider()
 
             VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "wifi").font(.caption2).foregroundStyle(.secondary)
-                    Text(wifiStatusLine).font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if wifi.auth == .notDetermined {
-                        Button("Grant") { wifi.requestAuth() }.font(.caption)
-                    } else if wifi.auth == .denied || wifi.auth == .restricted {
-                        Button("Settings") { wifi.openLocationSettings() }.font(.caption)
+                if wifi.homeGateEnabled {
+                    HStack(spacing: 5) {
+                        Image(systemName: homeIcon).font(.caption2).foregroundStyle(homeColor)
+                        Text(homeStatusLine).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
                     }
                 }
-                HStack(spacing: 6) {
-                    Text("Menu bar shows").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: $labelStyleRaw) {
-                        ForEach(LabelStyle.allCases) { Text($0.title).tag($0.rawValue) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .font(.caption)
+                HStack(spacing: 10) {
+                    Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
+                        .buttonStyle(.plain).font(.caption)
                     Spacer()
-                }
-                HStack {
-                    Toggle("Launch at login", isOn: $launchAtLogin)
-                        .toggleStyle(.checkbox)
-                        .font(.caption)
-                        .onChange(of: launchAtLogin) { _, on in
-                            do {
-                                if on { try SMAppService.mainApp.register() }
-                                else { try SMAppService.mainApp.unregister() }
-                            } catch {
-                                launchAtLogin = SMAppService.mainApp.status == .enabled
-                            }
-                        }
-                    Spacer()
-                    Button("Quit") { NSApp.terminate(nil) }
-                        .font(.caption)
+                    Button("Quit") { NSApp.terminate(nil) }.font(.caption)
                 }
             }
         }
         .padding(14)
         .frame(width: 340)
         .fixedSize(horizontal: false, vertical: true)
-        // Re-sync the login state on appear: the popover and the window are separate instances each
-        // with their own @State, and the setting can also change in System Settings.
-        .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
     }
 
     private var subline: String {
