@@ -5,6 +5,7 @@ struct PopoverView: View {
     @ObservedObject var model: BattCalModel
     @ObservedObject var wifi: WiFiMonitor
     var onPopOut: () -> Void = {}
+    var onOpenSettings: () -> Void = {}   // routed to AppDelegate.showSettings() by both hosts
     var inWindow: Bool = false   // true when hosted in the standalone window (no pop-out button)
 
     private var s: EngineStatus? { model.status }
@@ -25,13 +26,6 @@ struct PopoverView: View {
     }
     private var homeIcon: String { (wifi.atHome && wifi.authorized) ? "house.fill" : "house" }
     private var homeColor: Color { (wifi.atHome && wifi.authorized) ? .green : .secondary }
-
-    // Open the standard macOS Settings window from this AppKit-hosted popover (SettingsLink does not
-    // resolve inside an NSHostingController). showSettingsWindow: is the macOS 14+ responder action.
-    private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
 
     // Elapsed time in the current on-battery (discharge) run, H:MM, from the server.
     private var onBatteryText: String {
@@ -139,7 +133,7 @@ struct PopoverView: View {
                     }
                 }
                 HStack(spacing: 10) {
-                    Button { openSettings() } label: { Label("Settings", systemImage: "gearshape") }
+                    Button { onOpenSettings() } label: { Label("Settings", systemImage: "gearshape") }
                         .buttonStyle(.plain).font(.caption)
                     Spacer()
                     Button("Quit") { NSApp.terminate(nil) }.font(.caption)

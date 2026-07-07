@@ -6,11 +6,23 @@ import Combine
 struct BattCalBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     var body: some Scene {
-        // The status item, popover, and the poppable main window all live in the
-        // AppDelegate (AppKit) so the popover anchors precisely under the menu bar item
-        // and the window gets standard native chrome. This is a proper app (Dock icon +
+        // The status item, popover, the poppable main window, AND the Settings window all live in
+        // the AppDelegate (AppKit) so the popover anchors precisely under the menu bar item and
+        // every window gets deterministic native chrome. This is a proper app (Dock icon +
         // cmd-tab) PLUS a menu bar item, like coconutBattery.
-        Settings { SettingsView(model: appDelegate.model, wifi: appDelegate.wifi) }
+        //
+        // The empty Settings scene only satisfies SwiftUI's one-scene requirement. The real
+        // Settings window is AppDelegate.showSettings(): the showSettingsWindow: responder action
+        // no longer resolves from an AppKit-hosted popover on macOS 26, so the app-menu item and
+        // Cmd-comma are rerouted to the same AppKit window here (and belt-and-braces in the
+        // delegate's menu retarget).
+        Settings { EmptyView() }
+            .commands {
+                CommandGroup(replacing: .appSettings) {
+                    Button("Settings\u{2026}") { appDelegate.showSettings() }
+                        .keyboardShortcut(",", modifiers: .command)
+                }
+            }
     }
 }
 
@@ -21,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var mainWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -57,8 +70,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = NSHostingController(
-            rootView: PopoverView(model: model, wifi: wifi, onPopOut: { [weak self] in self?.showMainWindow() })
+            rootView: PopoverView(model: model, wifi: wifi,
+                                  onPopOut: { [weak self] in self?.showMainWindow() },
+                                  onOpenSettings: { [weak self] in self?.showSettings() })
         )
+
+        // Belt-and-braces for Cmd-comma / the app-menu Settings item: some macOS releases keep the
+        // Settings scene's auto-synthesized item instead of honoring CommandGroup(replacing:), so
+        // after SwiftUI finishes building the main menu, retarget whatever item owns the comma key
+        // equivalent to our window. Matching by key equivalent / legacy action (never the localized
+        // title) keeps this locale-proof; retargeting an already-correct item is harmless.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
+            if let item = appMenu.items.first(where: {
+                ($0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command)
+                    || $0.action == Selector(("showSettingsWindow:"))
+            }) {
+                item.target = self
+                item.action = #selector(self.handleShowSettings)
+            }
+        }
 
         // Keep the menu bar title in sync with the live model + chosen label style.
         model.$status.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateButton() }.store(in: &cancellables)
@@ -129,7 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mainWindow == nil {
             // The window is simply the menu bar popover, made persistent. Same view, same
             // look; a translucent vibrant backing so it matches the popover material.
-            let content = PopoverView(model: model, wifi: wifi, inWindow: true)
+            let content = PopoverView(model: model, wifi: wifi,
+                                      onOpenSettings: { [weak self] in self?.showSettings() },
+                                      inWindow: true)
                 .background(VisualEffectView().ignoresSafeArea())
             let hosting = NSHostingController(rootView: content)
             let w = NSWindow(contentViewController: hosting)
@@ -153,6 +186,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
     }
+
+    // The Settings window. Like the main window it is AppKit-owned, built once and reused (never
+    // released), so every entry point (popover gear, both window footers, the app menu, Cmd-comma)
+    // opens it deterministically - no reliance on the fragile showSettingsWindow: responder action.
+    func showSettings() {
+        if popover.isShown { popover.performClose(nil) }
+        if settingsWindow == nil {
+            let hosting = NSHostingController(rootView: SettingsView(model: model, wifi: wifi))
+            let w = NSWindow(contentViewController: hosting)
+            w.title = "BattCal Settings"
+            // Standard opaque settings chrome (unlike the vibrant popover window): fixed size.
+            w.styleMask = [.titled, .closable, .miniaturizable]
+            w.isReleasedWhenClosed = false   // close hides; the SwiftUI tree + pane selection survive reopen
+            hosting.view.layoutSubtreeIfNeeded()
+            w.setContentSize(hosting.view.fittingSize)
+            w.center()
+            settingsWindow = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func handleShowSettings() { showSettings() }
 
     // Open the window near where the user clicked (the menu bar item / dock), pinned just
     // below the menu bar on the screen that click is on.
