@@ -60,6 +60,20 @@ truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
   GENERATED from `bin/battcal-engine.sh` (the single source) by `./deploy.sh` via a
   surgical namespace transform that leaves the shared `battcal-telemetry.csv` and
   `~/.battcal/config` untouched. Edit ONLY `bin/battcal-engine.sh`, then `./deploy.sh`.
+- The server binds 127.0.0.1 and every POST/DELETE requires the `x-battcal: 1` header
+  (403 without): `curl -X POST -H "x-battcal: 1" http://localhost:4437/api/...`. No CORS
+  headers on purpose. GET stays open.
+- `/api/status` `adapterCut` (plugged && ExternalConnected=No) is the ground truth for
+  "BattCal cut the adapter"; UIs must key every "draining (adapter cut)" claim on it,
+  never on negative battery watts alone (a paused Mac under load briefly supplements a
+  maxed adapter).
+- The engine's EXIT trap re-enables the adapter on an UNMANAGED death; deploy.sh touches
+  `/var/tmp/<ns>.managed-restart` before its kickstart so deploys keep the drain phase.
+- The compiled-in home-SSID default is EMPTY (privacy). The owner's networks live in
+  `defaults read com.parsa.battcalbar homeSSIDs`; blanking or losing that key silently
+  turns gated cycling off at home (fail-safe away).
+- `scripts/check.sh` is the quality gate (bash -n all scripts, node --check, tsc,
+  read-only status smoke); `deploy.sh` runs it first and fails closed.
 
 ## Conventions
 
