@@ -53,7 +53,11 @@ function readMode(n) {
 }
 const TELEMETRY = join(HOME, 'Library/Logs/battcal-telemetry.csv');
 
+// First namespace whose state file exists wins (personal before published), so a stale
+// leftover install can silently receive the controls. Deterministic but surprising:
+// status() exposes namespaceConflict when BOTH exist so the UIs can surface it.
 const ns = () => NAMESPACES.find((n) => existsSync(n.state)) || NAMESPACES[1];
+const namespaceConflict = () => NAMESPACES.every((n) => existsSync(n.state));
 
 function ioregBattery() {
   try {
@@ -123,6 +127,23 @@ function readFreshOnBatteryStart(markerPath) {
   }
 }
 
+// macOS battery Condition, cached: system_profiler takes 1-2 s and the menu bar polls
+// /api/status every 15 s, so an uncached read spawns that subprocess 4x/min forever
+// (the engine throttles the very same call to ~60 s).
+let condCache = { at: 0, condition: null };
+function readCondition() {
+  if (Date.now() - condCache.at > 60_000) {
+    let condition = null;
+    try {
+      const sp = execFileSync('/usr/sbin/system_profiler', ['SPPowerDataType'], { encoding: 'utf8' });
+      const cm = sp.match(/Condition:\s*(.+)/);
+      condition = cm ? cm[1].trim() : null;
+    } catch {}
+    condCache = { at: Date.now(), condition };
+  }
+  return condCache.condition;
+}
+
 function status() {
   const n = ns();
   const ior = ioregBattery();
@@ -161,15 +182,12 @@ function status() {
   const cyclesRows = readCsv(n.cycles);
   const lastCycle = cyclesRows.at(-1) || null;
   const mode = readMode(n);
-  let condition = null;
-  try {
-    const sp = execFileSync('/usr/sbin/system_profiler', ['SPPowerDataType'], { encoding: 'utf8' });
-    const cm = sp.match(/Condition:\s*(.+)/);
-    condition = cm ? cm[1].trim() : null;
-  } catch {}
+  const condition = readCondition();
   let prep = null;
   try {
-    if (existsSync(n.prep)) prep = { active: true, startedAt: Number(readFileSync(n.prep, 'utf8').trim()) || null };
+    // Prep file: "<epoch> [prevMode]" - the mode to restore when prep ends (older files
+    // carry the epoch alone; DELETE then falls back to longevity).
+    if (existsSync(n.prep)) prep = { active: true, startedAt: Number(readFileSync(n.prep, 'utf8').trim().split(/\s+/)[0]) || null };
   } catch {}
   const bW = voltage !== null && amperage !== null ? +(voltage * amperage / 1e6).toFixed(1) : null;
   return {
@@ -177,6 +195,7 @@ function status() {
     paused,
     breakUntil,
     namespace: n.agentLabel, // launchctl agent label, so the menu bar controls the right one on any install
+    namespaceConflict: namespaceConflict(), // both installs' state files exist; controls target the first (personal) one
     mode,
     band: BANDS[mode],
     condition,
@@ -419,16 +438,24 @@ createServer((req, res) => {
     if (p === '/api/evidence') return json(res, 200, evidence());
     if (p === '/api/prep' && req.method === 'POST') {
       const n = ns();
+      const prevMode = readMode(n); // remember what the user was in, restored when prep ends
       writeFileSync(n.mode, 'calibration\n');
       try { unlinkSync(n.pause); } catch {}
-      writeFileSync(n.prep, String(Math.floor(Date.now() / 1000)) + '\n');
+      writeFileSync(n.prep, `${Math.floor(Date.now() / 1000)} ${prevMode}\n`);
       return json(res, 200, { prep: true, mode: 'calibration' });
     }
     if (p === '/api/prep' && req.method === 'DELETE') {
       const n = ns();
+      // Restore the mode prep replaced (second token of the prep file); a legacy
+      // epoch-only prep file falls back to longevity, same as before.
+      let prevMode = 'longevity';
+      try {
+        const tok = readFileSync(n.prep, 'utf8').trim().split(/\s+/)[1];
+        if (MODES.includes(tok)) prevMode = tok;
+      } catch {}
       try { unlinkSync(n.prep); } catch {}
-      writeFileSync(n.mode, 'longevity\n');
-      return json(res, 200, { prep: false, mode: 'longevity' });
+      writeFileSync(n.mode, prevMode + '\n');
+      return json(res, 200, { prep: false, mode: prevMode });
     }
     if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); return json(res, 200, { paused: true }); }
     if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} return json(res, 200, { paused: false }); }

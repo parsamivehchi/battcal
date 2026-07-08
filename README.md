@@ -33,12 +33,12 @@ menu bar (icon-only by default, so it stays clean):
 ```
 
 Left-click opens the popover; right-click the menu bar item cycles the readout
-(icon only -> watts + time -> time-left -> watts -> true health). macOS already
-shows the charge %, so BattCal never repeats it.
+(icon only -> time left -> watts -> true health -> watts + time). Icon only is the
+default, and macOS already shows the charge %, so BattCal never repeats it.
 
-One click on **⚡ Charge Now** pauses everything and charges at full speed. One click on
-**▶ Resume Calibration** picks the cycle back up. Every completed cycle appends a row to
-a CSV so you can watch the numbers converge:
+One click on **Normal charging** in the popover pauses everything and charges at full
+speed; one click on **Longevity** or **Calibration** picks the cycle back up. Every
+completed cycle appends a row to a CSV so you can watch the numbers converge:
 
 ```csv
 date,cycle_count,raw_mAh,nominal_mAh,apple_health
@@ -66,7 +66,7 @@ Calibration converges on the truth, in whichever direction the truth lies.
 - **[batt](https://github.com/charlie0129/batt)** (open source) provides the one
   superpower this needs: software-cutting the power adapter so the Mac runs on battery
   while physically plugged in.
-- A tiny **LaunchAgent state machine** (`battcal-engine.sh`, ~180 lines of bash) does
+- A tiny **LaunchAgent state machine** (`battcal-engine.sh`, ~400 lines of bash) does
   drain -> charge -> hold -> repeat, with `caffeinate -i` holding the Mac awake during
   drains so they actually progress.
 - **Plugged-in-only:** the engine detects the physical charger via `AdapterDetails` in
@@ -84,7 +84,8 @@ Requirements: Apple Silicon Mac, [Homebrew](https://brew.sh).
 ```sh
 git clone https://github.com/parsamivehchi/battcal.git
 cd battcal
-./install.sh --swiftbar     # or plain ./install.sh for no menu bar plugin
+./install.sh                # engine + dashboard backend; add --swiftbar only if you
+                            # prefer the SwiftBar plugin over the native app below
 ```
 
 The installer asks for your password once (the batt daemon is a system service).
@@ -105,21 +106,44 @@ release (`--dry-run` previews the artifact without publishing).
 
 ## Controls
 
-| Action | Menu bar | Terminal |
+| Action | Menu bar app | Terminal |
 |---|---|---|
-| Pause + charge at full speed now | ⚡ Charge Now | `touch /var/tmp/battcal.pause` |
-| Resume cycling | ▶ Resume Calibration | `rm /var/tmp/battcal.pause` |
-| Watch live | Open live log | `tail -f ~/Library/Logs/battcal.log` |
-| Per-cycle history | Open cycle history | `open ~/Library/Logs/battcal-history.csv` |
-| Stop everything | Advanced -> Stop Permanently | `./uninstall.sh` |
+| Pause + charge at full speed now | select **Normal charging** | `touch /var/tmp/battcal.pause` |
+| Resume cycling | select **Longevity** or **Calibration** | `rm /var/tmp/battcal.pause` |
+| Timed full-speed break (auto-resumes) | banner button during a drain | `echo $(($(date +%s)+1800)) > /var/tmp/battcal.pause` |
+| Watch live | Open dashboard (event log) | `tail -f ~/Library/Logs/battcal.log` |
+| Per-cycle history | Open dashboard (cycle table) | `open ~/Library/Logs/battcal-history.csv` |
+| Stop everything | Quit, then uninstall | `./uninstall.sh` |
 
-Config overrides live in `~/.battcal/config` (sourced by the engine):
+Config overrides live in `~/.battcal/config` (sourced by the engine). Only the
+variables the engine actually reads apply; these are their real names and defaults:
 
 ```sh
-LOW=10          # drain floor, percent (default 5)
-HOLD_SECS=7200  # hold at 100% (default 3600)
-POLL=15         # check interval seconds (default 30)
+LONGEVITY_LOW=10    # longevity band floor, percent
+LONGEVITY_HIGH=90   # longevity band ceiling, percent
+CALIBRATION_LOW=5   # calibration drain floor, percent
+HOLD_SECS=3600      # calibration: hold at 100% this long, seconds
+POLL=15             # check interval, seconds
+LOAD_THRESHOLD=8.0  # 1-min load average that counts as "CPU genuinely pegged"
+LOAD_RESUME=6.0     # resume draining only after load falls below this...
+RESUME_DEBOUNCE=3   # ...for this many consecutive polls
+LED_SCHEME=battcal  # battcal | truthful | off (see the LED table below)
+BATT=/opt/homebrew/bin/batt
 ```
+
+## Home-only cycling (Wi-Fi gate)
+
+The menu bar app can gate cycling on your Wi-Fi network, so BattCal drains only at
+home or the office and a plugged-in Mac in a cafe or meeting room charges like a
+normal Mac. Configure it in **Settings > Home Cycling**: toggle the gate and add your
+network names. The list ships empty; until you add a network, gated cycling stays off
+everywhere (fail-safe: BattCal never drains anywhere it has not been told is home).
+
+How it works: the app reads the current SSID (macOS requires Location permission for
+that - grant it once when prompted) and publishes an at-home signal to
+`/var/tmp/battcal-athome`. The engine treats a missing or stale (>90 s) signal as
+away, so quitting the app, revoking Location, or any glitch fails safe to normal
+charging. Turning the gate off cycles on every network, matching the pre-gate behavior.
 
 ## Genius Bar prep & evidence report
 
@@ -187,8 +211,9 @@ configure.
 
 ```sh
 ./deploy.sh                 # build + deploy + verify everything
-./deploy.sh [engine|server|dashboard|menubar|verify]
+./deploy.sh [engine|server|dashboard|menubar|verify|release vX.Y.Z]
 ./deploy.sh --dry-run       # show what it would do, run nothing
+./scripts/check.sh          # the quality gate deploy.sh runs first (read-only)
 ```
 
 The deployed engine is generated from `bin/battcal-engine.sh` (the single source);
@@ -201,5 +226,5 @@ edit that file, not the deployed copy.
   an external binary; it is installed via Homebrew, not bundled here.
 - Menu bar rendering by [SwiftBar](https://github.com/swiftbar/SwiftBar) (MIT), optional.
 
-*BattCal manipulates charging behavior. It is provided as-is; read the ~180 lines of
+*BattCal manipulates charging behavior. It is provided as-is; read the ~400 lines of
 bash before trusting it, which is the whole point of it being this small.*

@@ -39,7 +39,7 @@ extension View {
 }
 
 // A full-width tinted-fill action button for use INSIDE glass cards / banners (a solid
-// control on glass, never glass-on-glass). Standalone primary buttons use glassButtonStyle.
+// control on glass, never glass-on-glass).
 struct GlassActionButton: View {
     let title: String
     let icon: String

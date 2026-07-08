@@ -281,6 +281,13 @@ verify_menubar() {
 
 # ---- run ----
 say "${BOLD}battcal deploy${RESET}  cmd=$CMD  ns=$NS  uid=$UID_NUM  dry=$DRY"
+
+# Quality gate first, fail closed: nothing deploys if a syntax/type gate is red.
+# (verify is read-only anyway; --dry-run makes no changes to gate.)
+if [ "$DRY" = 0 ] && [ "$CMD" != verify ]; then
+  step "pre-flight gate (scripts/check.sh)"
+  if bash "$REPO/scripts/check.sh"; then pass "check.sh green"; else fail "check.sh failed - aborting before any deploy"; say ""; say "${RED}${BOLD}deploy aborted${RESET}"; exit 1; fi
+fi
 say "  engine  -> $ENGINE_DEST"
 say "  app dir -> $APP_DIR  ($APP_URL, dash present=$have_dash)"
 say "  menubar -> /Applications/BattCalBar.app  (present=$have_menubar)"

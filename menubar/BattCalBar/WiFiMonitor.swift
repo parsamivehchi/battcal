@@ -17,7 +17,9 @@ final class WiFiMonitor: NSObject, ObservableObject {
     private var timer: Timer?
 
     // --- Home detection config (edited in Settings; the engine reads the published gate files) ---
-    static let defaultHomeSSIDs = "BMP_ENGINEERING,BMP_FIBER"
+    // Ships EMPTY on purpose: users add their own networks in Settings > Home Cycling. With no
+    // homes configured, atHome is always false and gated cycling stays off everywhere (fail-safe).
+    static let defaultHomeSSIDs = ""
     // The current SSID, for outside-the-app verification (transform-safe path: deploy.sh only rewrites
     // the "/var/tmp/battcal." prefix, not "battcal-").
     private let ssidFile = "/var/tmp/battcal-wifi.ssid"
