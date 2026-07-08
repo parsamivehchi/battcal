@@ -130,6 +130,10 @@ deploy_engine() {
   fi
   mkdir -p "$(dirname "$ENGINE_DEST")"
   mv "$tmp" "$ENGINE_DEST"; chmod +x "$ENGINE_DEST"
+  # Fresh managed-restart marker: the dying engine's EXIT trap sees it and leaves the
+  # adapter exactly as the cycle had it (an UNMANAGED death re-enables the adapter so a
+  # crash never strands a plugged Mac draining to empty).
+  touch "/var/tmp/$NS.managed-restart"
   if launchctl kickstart -k "gui/$UID_NUM/$ENGINE_LABEL"; then pass "engine deployed + kickstarted"; else fail "engine deployed but kickstart failed (is the agent loaded?)"; fi
 }
 

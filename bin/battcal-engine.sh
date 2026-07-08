@@ -37,6 +37,7 @@ MODE_FILE=/var/tmp/battcal.mode
 HOLD_FILE=/var/tmp/battcal.holdstart
 CYCLE_FILE=/var/tmp/battcal.cyclestart
 CAFF_PID_FILE=/var/tmp/battcal.caffeinate.pid
+RESTART_MARKER=/var/tmp/battcal.managed-restart   # deploy.sh touches this right before its kickstart
 # Home-only cycling gate, published by the menu bar app. These fixed paths are intentionally OUTSIDE
 # the namespaced "/var/tmp/battcal." family (the app is a single binary, not namespace-transformed).
 HOMEGATE_FLAG="$HOME/.battcal/homegate.on"   # exists => the "only cycle on home Wi-Fi" gate is ON
@@ -87,7 +88,7 @@ check_condition() {
 }
 
 fully_charged() {
-  ioreg -rn AppleSmartBattery | sed -n 's/^ *"FullyCharged" = \(.*\)$/\1/p'
+  ioreg -rn AppleSmartBattery 2>/dev/null | sed -n 's/^ *"FullyCharged" = \(.*\)$/\1/p'
 }
 
 is_charging() { pmset -g batt | grep -q '; charging;'; }
@@ -95,7 +96,7 @@ is_charging() { pmset -g batt | grep -q '; charging;'; }
 # Physically plugged in? ExternalConnected reads No while batt has the adapter
 # software-cut, but AdapterDetails keeps the real charger info (Watts>0) either way.
 plugged() {
-  ioreg -rn AppleSmartBattery | grep '"AdapterDetails"' | grep -qE '"Watts"=[1-9]'
+  ioreg -rn AppleSmartBattery 2>/dev/null | grep '"AdapterDetails"' | grep -qE '"Watts"=[1-9]'
 }
 
 # Home-only cycling gate. Cycling is allowed when the gate is OFF, or ON and the menu bar app has
@@ -154,7 +155,7 @@ led() {
 # One detailed row per poll: what the battery is doing right now.
 log_telemetry() {
   local ior state chg pct rawcur rawmax mv ma temp aw watts
-  ior=$(ioreg -rn AppleSmartBattery)
+  ior=$(ioreg -rn AppleSmartBattery 2>/dev/null)
   state=$1; pct=$2
   chg=no; pmset -g batt | grep -q '; charging;' && chg=yes
   rawcur=$(echo "$ior" | sed -n 's/^ *"AppleRawCurrentCapacity" = \([0-9]*\)$/\1/p')
@@ -176,7 +177,7 @@ log_telemetry() {
 
 snapshot_csv() {
   local ior raw nom cyc apple cs dur
-  ior=$(ioreg -rn AppleSmartBattery)
+  ior=$(ioreg -rn AppleSmartBattery 2>/dev/null)
   raw=$(echo "$ior" | sed -n 's/^ *"AppleRawMaxCapacity" = \([0-9]*\)$/\1/p')
   nom=$(echo "$ior" | sed -n 's/^ *"NominalChargeCapacity" = \([0-9]*\)$/\1/p')
   cyc=$(echo "$ior" | sed -n 's/^ *"CycleCount" = \([0-9]*\)$/\1/p')
@@ -190,7 +191,36 @@ snapshot_csv() {
 
 begin_cycle() { date +%s > "$CYCLE_FILE"; }
 
-trap 'stop_caffeinate; "$BATT" magsafe-led enable >/dev/null 2>&1' EXIT TERM INT
+# On an UNMANAGED death, never leave a plugged Mac stranded on a software-cut adapter:
+# re-enable it on the way out. deploy.sh touches RESTART_MARKER right before its
+# kickstart, so a deploy skips the re-enable and the in-flight drain phase carries
+# straight through the relaunch (the startup reassert above restores the cut).
+# launchd's KeepAlive covers the SIGKILL/panic case this trap can never see.
+exit_adapter_guard() {
+  local m
+  m=$(stat -f %m "$RESTART_MARKER" 2>/dev/null || echo 0)
+  if [ $(( $(date +%s) - m )) -gt 30 ]; then
+    "$BATT" adapter enable >/dev/null 2>&1
+  fi
+}
+trap 'stop_caffeinate; exit_adapter_guard; "$BATT" magsafe-led enable >/dev/null 2>&1' EXIT TERM INT
+
+# Enter the drain state, cutting the adapter ONLY if the drain gates pass right now;
+# otherwise start drain in the held state (adapter untouched, DRAIN_PAUSED=1) and let
+# the loop's gate logic decide. Cutting unconditionally used to buy one 15 s drain and
+# an LED flap per turnaround whenever the Mac was away, unplugged, or CPU-pegged.
+enter_drain() {
+  begin_cycle
+  echo drain > "$STATE_FILE"
+  FULL_SINCE=""
+  if plugged && home_ok && ! user_busy; then
+    "$BATT" adapter disable >>"$LOG" 2>&1
+    DRAIN_PAUSED=0
+  else
+    log "entering DRAIN held (adapter untouched - unplugged, away, or CPU busy)"
+    DRAIN_PAUSED=1
+  fi
+}
 
 # v2.1: history CSV gained mode/band/duration columns; park legacy files aside.
 if [ -f "$CSV" ] && ! head -1 "$CSV" | grep -q ',mode,'; then
@@ -239,10 +269,10 @@ while true; do
 
   STATE=$(cat "$STATE_FILE")
   if [ "$STATE" = "paused" ]; then
+    # Resume = a fresh cycle BY DESIGN (even mid-charge: the user asked to cycle, so cycle
+    # from wherever the battery sits). The adapter is only cut if the gates pass right now.
     log "RESUMED - entering drain"
-    begin_cycle
-    echo drain > "$STATE_FILE"; STATE=drain
-    "$BATT" adapter disable >>"$LOG" 2>&1
+    enter_drain; STATE=drain
   fi
 
   MODE=$(mode)
@@ -252,15 +282,32 @@ while true; do
     # Leaving calibration while parked at 100% (hold): start draining now.
     if [ "$MODE" = "longevity" ] && [ "$STATE" = "hold" ]; then
       log "longevity mode does not hold at full - switching to DRAIN"
-      "$BATT" adapter disable >>"$LOG" 2>&1
-      begin_cycle
-      echo drain > "$STATE_FILE"; STATE=drain
+      enter_drain; STATE=drain
     fi
   fi
   if [ "$MODE" = "longevity" ]; then LOW=$LONGEVITY_LOW; HIGH=$LONGEVITY_HIGH; else LOW=$CALIBRATION_LOW; HIGH=100; fi
 
   P=$(pct)
   if [ -z "$P" ]; then sleep "$POLL"; continue; fi
+
+  # A transient empty ioreg read (IOKit lookup during wake) would write a polluted
+  # telemetry row (blank capacity/mV/mA, 0.0 watts/temp) and make plugged() read
+  # unplugged for one poll - skip the whole iteration instead.
+  if [ -z "$(ioreg -rn AppleSmartBattery 2>/dev/null)" ]; then
+    log "ioreg returned nothing (transient wake glitch) - skipping this poll"
+    sleep "$POLL"; continue
+  fi
+
+  # Rotate runaway logs (~150 KB/day each; the server reparses the telemetry CSV per
+  # request) at startup and then hourly. One prior generation is kept; log_telemetry
+  # rewrites a fresh header, so a mid-file duplicate header can never appear.
+  if [ "${ROT_TICK:-0}" -eq 0 ]; then
+    for f in "$TELEMETRY" "$LOG"; do
+      sz=$(stat -f %z "$f" 2>/dev/null || echo 0)
+      if [ "$sz" -gt 5242880 ]; then mv "$f" "$f.1" && log "rotated $f ($sz bytes) -> $f.1"; fi
+    done
+  fi
+  ROT_TICK=$(( (${ROT_TICK:-0} + 1) % 240 ))
 
   log_telemetry "$STATE" "$P"
   # check_condition spawns system_profiler (~1-2s), so throttle it to ~every 60s rather
@@ -335,15 +382,27 @@ while true; do
         if [ "$P" -ge "$HIGH" ]; then
           snapshot_csv
           log "reached ${P}% - longevity turnaround (never charging to 100%), switching to DRAIN"
-          "$BATT" adapter disable >>"$LOG" 2>&1
-          begin_cycle
-          echo drain > "$STATE_FILE"
+          enter_drain
         fi
       else
         if [ "$P" -ge 99 ] && [ "$(fully_charged)" = "Yes" ]; then
           log "fully charged at ${P}% - holding $((HOLD_SECS/60)) min (calibration)"
           date +%s > "$HOLD_FILE"
           echo hold > "$STATE_FILE"
+          FULL_SINCE=""
+        elif [ "$P" -ge 100 ]; then
+          # Fallback for a pack that never reports FullyCharged=Yes: 30 min parked at
+          # 100% counts as full. Without this the engine would sit at 100% with the
+          # adapter on indefinitely - the exact state BattCal exists to avoid.
+          FULL_SINCE=${FULL_SINCE:-$(date +%s)}
+          if [ $(( $(date +%s) - FULL_SINCE )) -ge 1800 ]; then
+            log "at 100% for 30 min without FullyCharged=Yes - counting as full, holding"
+            date +%s > "$HOLD_FILE"
+            echo hold > "$STATE_FILE"
+            FULL_SINCE=""
+          fi
+        else
+          FULL_SINCE=""
         fi
       fi
       ;;
@@ -353,18 +412,14 @@ while true; do
       if [ "$MODE" = "longevity" ]; then
         snapshot_csv
         log "longevity mode does not hold at full - switching to DRAIN"
-        "$BATT" adapter disable >>"$LOG" 2>&1
-        begin_cycle
-        echo drain > "$STATE_FILE"
+        enter_drain
         sleep "$POLL"; continue
       fi
       HS=$(cat "$HOLD_FILE" 2>/dev/null || echo 0)
       if [ $(( $(date +%s) - HS )) -ge "$HOLD_SECS" ]; then
         snapshot_csv
         log "hold complete - snapshot logged, switching to DRAIN"
-        "$BATT" adapter disable >>"$LOG" 2>&1
-        begin_cycle
-        echo drain > "$STATE_FILE"
+        enter_drain
       fi
       ;;
   esac
