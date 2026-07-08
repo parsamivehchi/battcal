@@ -377,6 +377,15 @@ export default function App() {
       {errs.action && <div className="err" role="alert">{errs.action}</div>}
       {(errs.status || errs.data) && <div className="err" role="alert">Cannot reach the BattCal engine API: {errs.status || errs.data}</div>}
 
+      {status?.namespaceConflict && (
+        <div className="banner banner-notice" role="status">
+          <div className="banner-text">
+            <b>Two BattCal installs detected.</b> Both installs' state files are present, so controls here
+            target {status.namespace}. Remove the unused install to avoid ambiguous control.
+          </div>
+        </div>
+      )}
+
       {breakActive ? (
         <div className="banner banner-break" aria-live="polite">
           <div className="banner-text">

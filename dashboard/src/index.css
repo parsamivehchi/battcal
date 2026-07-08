@@ -234,3 +234,4 @@ table.data tr:last-child td { border-bottom: none; }
 .banner .action { white-space: nowrap; }
 .banner-warn { border-color: var(--status-serious); background: rgba(236, 131, 90, 0.10); }
 .banner-break { border-color: var(--series-1); background: var(--accent-wash); }
+.banner-notice { border-color: var(--status-warning); background: rgba(250, 178, 25, 0.10); }

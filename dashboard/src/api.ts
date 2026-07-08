@@ -24,6 +24,8 @@ export interface Status {
   designCycles: number;
   appleHealth: string | number | null;
   condition: string | null;
+  namespace: string;           // the install controls target (personal 'battery-calibrate' vs OSS 'battcal')
+  namespaceConflict: boolean;  // both installs' state files exist; controls silently target the first (personal)
   prep: { active: boolean; startedAt: number | null } | null;
   updatedAt: string;
 }
