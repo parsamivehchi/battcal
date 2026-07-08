@@ -9,6 +9,7 @@ export interface Status {
   pct: number | null;
   charging: boolean;
   plugged: boolean;
+  adapterCut: boolean;  // plugged AND ExternalConnected=No: BattCal has the adapter software-cut right now
   adapterW: number;
   batteryW: number | null;
   amperageMa: number | null;
@@ -78,10 +79,15 @@ export const fetchStatus = () => get<Status>('/api/status');
 export const fetchTelemetry = (hours: number) => get<TelemetryRow[]>(`/api/telemetry?hours=${hours}`);
 export const fetchCycles = () => get<CycleRow[]>('/api/cycles');
 export const fetchLog = (lines = 120) => get<string[]>(`/api/log?lines=${lines}`);
-export const postPause = () => fetch('/api/pause', { method: 'POST' });
-export const postResume = () => fetch('/api/resume', { method: 'POST' });
-export const postBreak = (minutes: number) => fetch(`/api/break?minutes=${minutes}`, { method: 'POST' });
-export const postMode = (mode: Mode) => fetch(`/api/mode?mode=${mode}`, { method: 'POST' });
+// Every state-changing call carries the x-battcal header the server requires (CSRF guard);
+// requests without it are rejected with 403.
+const send = (path: string, method: 'POST' | 'DELETE') =>
+  fetch(path, { method, headers: { 'x-battcal': '1' } });
+
+export const postPause = () => send('/api/pause', 'POST');
+export const postResume = () => send('/api/resume', 'POST');
+export const postBreak = (minutes: number) => send(`/api/break?minutes=${minutes}`, 'POST');
+export const postMode = (mode: Mode) => send(`/api/mode?mode=${mode}`, 'POST');
 export const fetchEvidence = () => get<Evidence>('/api/evidence');
-export const postPrep = () => fetch('/api/prep', { method: 'POST' });
-export const endPrep = () => fetch('/api/prep', { method: 'DELETE' });
+export const postPrep = () => send('/api/prep', 'POST');
+export const endPrep = () => send('/api/prep', 'DELETE');

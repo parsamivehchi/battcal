@@ -195,10 +195,13 @@ export default function App() {
 
   // 1s countdown clock, ticking only while a throttle banner or benchmark break is on screen.
   const [now, setNow] = useState(() => Date.now());
-  // Throttled only while the battery is ACTUALLY discharging (adapter cut). During an
-  // idle-gate activity hold the state is still "drain" but the adapter is re-enabled and
-  // the battery charges, so gate on real power flow, not the state label.
+  // Throttle banner only when the Mac genuinely runs on battery: adapter software-cut by
+  // BattCal (server-reported ground truth from ioreg ExternalConnected) or physically
+  // unplugged. batteryW alone is NOT enough: paused at 100% under a heavy load, the battery
+  // briefly supplements a maxed adapter (negative watts) while charging stays perfectly
+  // normal - that must never claim "adapter cut".
   const discharging = status?.batteryW != null && status.batteryW < -0.5;
+  const throttled = discharging && (status?.adapterCut === true || status?.plugged === false);
   const breakUntilMs = status?.breakUntil != null ? status.breakUntil * 1000 : null;
   const breakActive = breakUntilMs != null && breakUntilMs > now;
   // Tick the 1s clock only while a benchmark-break countdown is on screen. A plain drain shows a
@@ -373,10 +376,10 @@ export default function App() {
           </div>
           <button className="action" onClick={() => doPost(postResume, 'Resume')}>Resume calibration now</button>
         </div>
-      ) : discharging ? (
+      ) : throttled ? (
         <div className="banner banner-warn" aria-live="polite">
           <div className="banner-text">
-            <b>CPU is power-throttled.</b> {status?.plugged
+            <b>CPU is power-throttled.</b> {status?.adapterCut
               ? 'BattCal is draining (adapter cut), so the Mac runs on battery. Benchmarks and heavy compute score low, and worse as the battery drops.'
               : 'On battery. CPU-heavy benchmarks score lower than plugged in, and worse as the battery drops.'}
           </div>
@@ -390,7 +393,7 @@ export default function App() {
         <div className="tile"><div className="label">Power flow</div>
           <div className="value" style={{ color: flow === 'charging' ? 'var(--diverge-pos)' : flow === 'draining' ? 'var(--diverge-neg)' : undefined }}>
             {status?.batteryW !== null && status?.batteryW !== undefined ? (status.batteryW > 0 ? '+' : '') + status.batteryW : '--'}<small>W</small></div>
-          <div className="sub">{status == null ? '--' : flow === 'charging' ? 'charging' : flow === 'draining' ? 'discharging' : status.plugged ? 'holding (not charging)' : 'on battery'}</div></div>
+          <div className="sub">{status == null ? '--' : flow === 'charging' ? 'charging' : flow === 'draining' ? (status.plugged && !status.adapterCut ? 'supplementing the adapter' : 'discharging') : status.plugged ? 'holding (not charging)' : 'on battery'}</div></div>
         <div className="tile"><div className="label">Temperature</div><div className="value">{status?.tempC ?? '--'}<small>&deg;C</small></div>
           <div className="sub">battery pack</div></div>
         <div className="tile"><div className="label">True health</div><div className="value">{status?.rawHealthPct ?? '--'}<small>%</small></div>

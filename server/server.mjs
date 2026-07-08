@@ -134,6 +134,11 @@ function status() {
     charging = /; charging;/.test(pm);
   } catch {}
   const adapter = ior.match(/"AdapterDetails" = \{.*?"Watts"=(\d+)/);
+  // ExternalConnected reads No while batt has the adapter software-cut, but AdapterDetails
+  // Watts stays >0 for a physically present charger. plugged && !ExternalConnected is
+  // therefore the ground truth for "BattCal cut the adapter" - unlike inferring it from
+  // engine state files, it is also correct during activity holds and while paused.
+  const extConnected = /"ExternalConnected" = Yes/.test(ior);
   const rawMax = num(ior, 'AppleRawMaxCapacity');
   const design = num(ior, 'DesignCapacity');
   const nominal = num(ior, 'NominalChargeCapacity');
@@ -179,6 +184,7 @@ function status() {
     pct,
     charging,
     plugged: adapter !== null && Number(adapter[1]) > 0,
+    adapterCut: adapter !== null && Number(adapter[1]) > 0 && !extConnected,
     adapterW: adapter ? Number(adapter[1]) : 0,
     batteryW: bW,
     amperageMa: amperage,
@@ -293,7 +299,10 @@ function evidence() {
   // be in a charge/hold state at BOTH ends of the gap (adapter delivering before and after), which
   // excludes the common false positive: unplugging and running on battery through a sleep. Even so this
   // stays a POSSIBLE drop, not an asserted symptom (see symptomsFound below).
-  const adapterOn = (r) => r.state === 'charge' || r.state === 'hold';
+  // The engine never checks plugged() inside charge/hold, so an unplug mid-charge leaves
+  // state=charge while the Mac is really on battery; require the measured adapter_W column
+  // to agree, or an ordinary sleep-on-battery gap becomes a phantom shutdown row.
+  const adapterOn = (r) => (r.state === 'charge' || r.state === 'hold') && Number(r.adapter_W) > 0;
   const shutdowns = [];
   for (let k = 1; k < rows.length; k++) {
     const prev = rows[k - 1], cur = rows[k];
@@ -376,12 +385,12 @@ function serveStatic(req, res) {
   createReadStream(file).pipe(res);
 }
 
+// No CORS headers on purpose: every legitimate client is either same-origin (the SPA's
+// relative fetches, both direct on :4437 and through the portless proxy) or not CORS-bound
+// at all (the menu bar's URLSession). Granting cross-origin reads would let any web page
+// the user visits read battery state off loopback.
 const json = (res, code, body) => {
-  res.writeHead(code, {
-    'content-type': 'application/json',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
-  });
+  res.writeHead(code, { 'content-type': 'application/json' });
   res.end(code === 204 ? undefined : JSON.stringify(body)); // 204 must carry no body
 };
 
@@ -393,7 +402,15 @@ createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   try {
-    if (req.method === 'OPTIONS') return json(res, 204, {});
+    if (req.method === 'OPTIONS') return json(res, 204, {}); // no allow-* headers: every cross-origin preflight fails
+    // The charging control plane is state-changing, so every POST/DELETE must carry the
+    // x-battcal header. A custom header cannot be set by HTML forms and forces a CORS
+    // preflight on cross-origin fetch (which the bare OPTIONS above never approves), so a
+    // drive-by page cannot un-pause the engine or flip it to calibration. GET stays open
+    // for the SPA and read-only tooling.
+    if ((req.method === 'POST' || req.method === 'DELETE') && req.headers['x-battcal'] !== '1') {
+      return json(res, 403, { error: 'missing x-battcal header' });
+    }
     if (p === '/api/health') return json(res, 200, { ok: true });
     if (p === '/api/status') return json(res, 200, status());
     if (p === '/api/telemetry') return json(res, 200, telemetry(numParam(url.searchParams.get('hours'), 24, 24 * 90)));
@@ -448,6 +465,8 @@ createServer((req, res) => {
   } catch (e) {
     return json(res, 500, { error: String(e?.message || e) });
   }
-}).listen(PORT, () => {
+// IPv4 loopback bind on purpose (see localhost-urls.md): the charging control plane must
+// never be LAN-reachable, and the portless root proxy reaches local services over IPv4.
+}).listen(PORT, '127.0.0.1', () => {
   console.log(`battcal dashboard: http://localhost:${PORT}`);
 });
