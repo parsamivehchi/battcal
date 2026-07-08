@@ -69,6 +69,20 @@ struct PopoverView: View {
                 }
             }
 
+            // Two installs present: controls silently target the first (personal) namespace, so
+            // warn and name which one. Mirrors the dashboard's amber notice banner.
+            if model.status?.namespaceConflict == true {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2).foregroundStyle(.orange)
+                    Text("Two BattCal installs detected. Controls target \(model.status?.namespace ?? "the first install"). Remove the unused one.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 5).padding(.horizontal, 8)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            }
+
             // Throttle warning while draining, or a live countdown during a break. The
             // condition lives INSIDE the ticking TimelineView so the banner clears the
             // second a break elapses, instead of leaving a blank card until the next

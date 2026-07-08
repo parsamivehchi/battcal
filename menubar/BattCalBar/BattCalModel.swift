@@ -43,6 +43,7 @@ struct EngineStatus: Codable {
     var condition: String?
     var prep: PrepInfo?
     var namespace: String?   // launchctl agent label the server detected; nil on older servers
+    var namespaceConflict: Bool?   // both installs' state files present -> controls target the first; nil on older servers
     var onBatteryMin: Double?   // minutes in the current contiguous discharge run; nil when not discharging
 
     struct Band: Codable { var low: Int; var high: Int }
@@ -392,10 +393,15 @@ final class BattCalModel: ObservableObject {
     func menuBarSymbol(for style: LabelStyle) -> String {
         guard reachable else { return "exclamationmark.triangle" }
         if !engineLoaded { return "pause.circle" }
-        // A real charge/drain wins over the paused glyph: in Normal mode the engine is paused but
-        // macOS still trickle-charges, so mark the true flow direction, never a "paused" glyph
-        // next to a live "IN/OUT" watts readout. isFlatFlow already treats a sub-1W charging
-        // trickle as flat, so only a genuine flow trips the bolt/arrow.
+        // Paused (Normal charging, no break) reads paused - matching the popover glyph (symbolName)
+        // and the "Normal charging" state line. Even while macOS trickle-charges or the battery
+        // briefly supplements a maxed adapter under load, BattCal is doing nothing, so a flow arrow
+        // here (especially the drain arrow) would falsely imply BattCal is cutting/moving power. The
+        // live watts text still carries any incidental flow; the glyph reflects BattCal's STATE.
+        if status?.paused == true, status?.breakUntil == nil { return "pause.circle" }
+        // While actually cycling (or during a benchmark break's trickle), mark the true flow
+        // direction (bolt = charging, down = draining); a flat sub-1W trickle collapses to the
+        // resting band-cycler emblem.
         if !isFlatFlow { return flow == .draining ? "arrow.down.circle" : "bolt.batteryblock.fill" }
         if status?.paused == true { return "pause.circle" }
         return "minus.plus.batteryblock.fill"
