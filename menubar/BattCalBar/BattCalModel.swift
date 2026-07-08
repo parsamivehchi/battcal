@@ -27,6 +27,7 @@ struct EngineStatus: Codable {
     var pct: Int?
     var charging: Bool
     var plugged: Bool
+    var adapterCut: Bool?   // plugged with ExternalConnected=No: BattCal has the adapter software-cut; nil on older servers
     var adapterW: Int
     var batteryW: Double?
     var amperageMa: Double?
@@ -159,10 +160,18 @@ final class BattCalModel: ObservableObject {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 
+    // Every state-changing request carries the x-battcal header the server requires
+    // (CSRF guard); a bare POST is rejected with 403.
+    private static func controlRequest(_ url: URL) -> URLRequest {
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("1", forHTTPHeaderField: "x-battcal")
+        return req
+    }
+
     private func post(_ path: String) {
         Task {
-            var req = URLRequest(url: base.appendingPathComponent(path))
-            req.httpMethod = "POST"
+            let req = Self.controlRequest(base.appendingPathComponent(path))
             _ = try? await URLSession.shared.data(for: req)
             refresh()
         }
@@ -175,22 +184,22 @@ final class BattCalModel: ObservableObject {
     // Uses a relative URL with a query (not post(), which would encode the "?").
     func benchmarkBreak(minutes: Int) {
         Task {
-            var req = URLRequest(url: URL(string: "api/break?minutes=\(minutes)", relativeTo: base)!)
-            req.httpMethod = "POST"
+            let req = Self.controlRequest(URL(string: "api/break?minutes=\(minutes)", relativeTo: base)!)
             _ = try? await URLSession.shared.data(for: req)
             refresh()
         }
     }
 
-    // True only while the battery is ACTUALLY discharging (adapter cut) and macOS is
-    // power-throttling the CPU. During an idle-gate activity hold the state is still
-    // "drain" but the adapter is re-enabled, so gate on real power flow, not the label.
+    // True while the battery is measurably discharging. Direction only - it does NOT
+    // imply BattCal did anything: paused at 100% under a heavy load, the battery briefly
+    // supplements a maxed adapter and this reads true while charging stays normal.
     var isDischarging: Bool { reachable && engineLoaded && (status?.batteryW ?? 0) < -0.5 }
 
-    // BattCal is DELIBERATELY draining (adapter cut while plugged in), as opposed to the Mac simply
-    // running on battery when unplugged. The CPU-throttle warning only makes sense for the former;
-    // when you are merely unplugged, being on battery is normal, not something BattCal did.
-    var isCyclingDrain: Bool { isDischarging && status?.plugged == true }
+    // BattCal is DELIBERATELY draining: the server-reported adapterCut (ioreg
+    // ExternalConnected=No while a charger is physically present) is the ground truth,
+    // so a paused/supplementing battery or a plain unplugged Mac never trips the
+    // CPU-throttle warning.
+    var isCyclingDrain: Bool { isDischarging && status?.adapterCut == true }
 
     // Actual power flow right now, from measured battery watts (positive = charging,
     // negative = discharging). This is the SOURCE OF TRUTH for every readout: during an
@@ -289,8 +298,7 @@ final class BattCalModel: ObservableObject {
     }
     func setMode(_ m: String) {
         Task {
-            var req = URLRequest(url: URL(string: "api/mode?mode=\(m)", relativeTo: base)!)
-            req.httpMethod = "POST"
+            let req = Self.controlRequest(URL(string: "api/mode?mode=\(m)", relativeTo: base)!)
             _ = try? await URLSession.shared.data(for: req)
             refresh()
         }
@@ -318,12 +326,15 @@ final class BattCalModel: ObservableObject {
             }
             switch target {
             case .longevity, .calibration:
-                var r = URLRequest(url: base.appendingPathComponent("api/resume")); r.httpMethod = "POST"
-                _ = try? await URLSession.shared.data(for: r)
-                var m = URLRequest(url: URL(string: "api/mode?mode=\(target.rawValue)", relativeTo: base)!); m.httpMethod = "POST"
+                // Mode FIRST, then resume: if a poll lands between the two POSTs it reads
+                // "paused in the new mode" (harmless) instead of "resumed in the OLD mode",
+                // which would briefly start a cycle under the band the user just left.
+                let m = Self.controlRequest(URL(string: "api/mode?mode=\(target.rawValue)", relativeTo: base)!)
                 _ = try? await URLSession.shared.data(for: m)
+                let r = Self.controlRequest(base.appendingPathComponent("api/resume"))
+                _ = try? await URLSession.shared.data(for: r)
             case .normal:
-                var p = URLRequest(url: base.appendingPathComponent("api/pause")); p.httpMethod = "POST"
+                let p = Self.controlRequest(base.appendingPathComponent("api/pause"))
                 _ = try? await URLSession.shared.data(for: p)
             case .off:
                 break
@@ -363,13 +374,14 @@ final class BattCalModel: ObservableObject {
         default:    levelGlyph = "battery.100percent"
         }
         if !engineLoaded { return levelGlyph }
-        // A real charge shows an up-arrow (symmetric with the drain's down-arrow below), so the header
-        // does not read "paused" while charging.
-        if !isFlatFlow, flow == .charging { return "arrow.up.circle" }
-        // A real drain shows the drain arrow, matching the menu bar and the Power tile.
-        if !isFlatFlow, flow == .draining { return "arrow.down.circle" }
-        // The pause glyph is ONLY for a genuine hold (flat + paused).
-        if isFlatFlow, s.paused { return "pause.circle" }
+        // Paused (Normal charging, no break running) always reads paused - even while macOS
+        // trickle-charges or the battery briefly supplements a maxed adapter under load. The
+        // engine is not cycling, so the header must never show a flow arrow next to a state
+        // line that says "Normal charging".
+        if s.paused, s.breakUntil == nil { return "pause.circle" }
+        // While cycling, direction already lives in the state line ("Draining to 5%") and the
+        // Power tile; repeating it here as an arrow was pure duplication next to the big %.
+        // The glyph shows the battery LEVEL instead.
         return levelGlyph
     }
 

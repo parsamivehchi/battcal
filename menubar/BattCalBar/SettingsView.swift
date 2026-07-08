@@ -387,7 +387,8 @@ private struct HomeCyclingPane: View {
         if !wifi.authorized { return "Grant location access so BattCal can read the network name." }
         if (wifi.ssid ?? "").isEmpty { return "Treated as away - charging normally." }
         if !gateEnabled { return "Home gate is off - cycling runs on any network." }
-        return wifi.atHome ? "Home network - cycling active here." : "Away - charging normally to 100%."
+        // The GATE, not activity: cycling may still be paused or holding while at home.
+        return wifi.atHome ? "Home network - cycling allowed here." : "Away - charging normally to 100%."
     }
 }
 

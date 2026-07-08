@@ -22,7 +22,9 @@ struct PopoverView: View {
     private var homeStatusLine: String {
         if !wifi.authorized { return "Home cycling: grant location in Settings" }
         guard let s = wifi.ssid, !s.isEmpty else { return "Away (no Wi-Fi) \u{00B7} charging normally" }
-        return wifi.atHome ? "\(s) \u{00B7} cycling here" : "\(s) \u{00B7} away, charging normally"
+        // Describes the Wi-Fi GATE, not activity: the engine may be paused while at home,
+        // so never assert "cycling here" (it contradicted the header's Normal charging).
+        return wifi.atHome ? "\(s) \u{00B7} cycling allowed here" : "\(s) \u{00B7} away, charging normally"
     }
     private var homeIcon: String { (wifi.atHome && wifi.authorized) ? "house.fill" : "house" }
     private var homeColor: Color { (wifi.atHome && wifi.authorized) ? .green : .secondary }
@@ -67,9 +69,12 @@ struct PopoverView: View {
                 }
             }
 
-            // Throttle warning while draining, or a live countdown during a break.
-            if model.isCyclingDrain || model.breakRemaining() != nil {
-                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            // Throttle warning while draining, or a live countdown during a break. The
+            // condition lives INSIDE the ticking TimelineView so the banner clears the
+            // second a break elapses, instead of leaving a blank card until the next
+            // 15 s poll lets the server clear breakUntil.
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                if model.isCyclingDrain || model.breakRemaining(asOf: ctx.date) != nil {
                     PowerBanner(model: model, now: ctx.date)
                 }
             }
