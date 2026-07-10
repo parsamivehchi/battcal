@@ -10,12 +10,13 @@ import ServiceManagement
 // MARK: - Panes
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, homeCycling, about
+    case general, homeCycling, schedule, about
     var id: String { rawValue }
     var title: String {
         switch self {
         case .general: return "General"
         case .homeCycling: return "Home Cycling"
+        case .schedule: return "Work Schedule"
         case .about: return "About"
         }
     }
@@ -23,6 +24,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .homeCycling: return "house.fill"
+        case .schedule: return "calendar.badge.clock"
         case .about: return "info.circle.fill"
         }
     }
@@ -30,6 +32,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return .gray
         case .homeCycling: return .green
+        case .schedule: return .purple
         case .about: return .blue
         }
     }
@@ -73,6 +76,7 @@ struct SettingsView: View {
                 switch pane {
                 case .general: GeneralPane()
                 case .homeCycling: HomeCyclingPane(wifi: wifi)
+                case .schedule: WorkSchedulePane(model: model)
                 case .about: AboutPane(model: model)
                 }
             }
@@ -389,6 +393,130 @@ private struct HomeCyclingPane: View {
         if !gateEnabled { return "Home gate is off - cycling runs on any network." }
         // The GATE, not activity: cycling may still be paused or holding while at home.
         return wifi.atHome ? "Home network - cycling allowed here." : "Away - charging normally to 100%."
+    }
+}
+
+// MARK: - Work Schedule
+
+// Cycle only inside a weekly window (e.g. Mon-Fri 8:00-18:00); outside it BattCal charges
+// like a stock Mac. The server file (~/.battcal/schedule) is the source of truth - state
+// seeds from /api/status and every edit POSTs /api/schedule - so the dashboard stays in sync.
+private struct WorkSchedulePane: View {
+    @ObservedObject var model: BattCalModel
+    @State private var enabled = false
+    @State private var days: Set<Int> = [1, 2, 3, 4, 5]
+    @State private var start = WorkSchedulePane.time(8, 0)
+    @State private var end = WorkSchedulePane.time(18, 0)
+    @State private var seeded = false
+
+    private static let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    private static func time(_ h: Int, _ m: Int) -> Date {
+        Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date()
+    }
+    private static func hhmm(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+        return String(format: "%02d%02d", c.hour ?? 0, c.minute ?? 0)
+    }
+    private static func parse(_ s: String?) -> Date? {
+        guard let s, s.count == 4, let h = Int(s.prefix(2)), let m = Int(s.suffix(2)) else { return nil }
+        return time(h, m)
+    }
+
+    private var valid: Bool { !days.isEmpty && Self.hhmm(start) < Self.hhmm(end) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsCard {
+                SettingRow(symbol: "calendar.badge.clock", tint: .purple,
+                           title: "Cycle on a work schedule",
+                           subtitle: "Cycle the battery only inside the window below. Outside it (evenings, weekends) BattCal charges normally to 100%, exactly like a stock Mac.") {
+                    Toggle("", isOn: $enabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .onChange(of: enabled) { _, _ in commit() }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Eyebrow("Days")
+                SettingsCard {
+                    HStack(spacing: 6) {
+                        ForEach(1...7, id: \.self) { d in
+                            let on = days.contains(d)
+                            Button(Self.dayNames[d - 1]) {
+                                if on { days.remove(d) } else { days.insert(d) }
+                                commit()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(on ? Color.white : .primary)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(on ? Color.purple : Color.primary.opacity(0.07)))
+                        }
+                    }
+                    if days.isEmpty {
+                        Text("Pick at least one day - with none selected the schedule stays off.")
+                            .font(.system(size: 11.5)).foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Eyebrow("Hours")
+                SettingsCard {
+                    SettingRow(symbol: "sunrise.fill", tint: .orange, title: "Start cycling",
+                               subtitle: "Cycling (and any manual pause left over from yesterday) resets here.") {
+                        DatePicker("", selection: $start, displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .onChange(of: start) { _, _ in commit() }
+                    }
+                    Divider()
+                    SettingRow(symbol: "sunset.fill", tint: .indigo, title: "Back to normal charging",
+                               subtitle: "From here the battery charges to 100% and stays there.") {
+                        DatePicker("", selection: $end, displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .onChange(of: end) { _, _ in commit() }
+                    }
+                    if Self.hhmm(start) >= Self.hhmm(end) {
+                        Text("Start must be before end (overnight windows are not supported).")
+                            .font(.system(size: 11.5)).foregroundStyle(.orange)
+                    }
+                }
+            }
+            .disabled(!enabled)
+            .opacity(enabled ? 1 : 0.5)
+
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 13)).foregroundStyle(.purple)
+                Text("Manual choices win until the next boundary: pause during work hours and it stays paused until the window ends; resume in the evening and it cycles until the next work day starts. The home Wi-Fi gate still applies on top.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.purple.opacity(0.07)))
+        }
+        .onAppear { seed() }
+    }
+
+    // Seed the controls from the live server config exactly once per pane visit, so an
+    // edit in flight is not clobbered by the next 15 s status poll.
+    private func seed() {
+        guard !seeded, let sc = model.status?.schedule else { return }
+        seeded = true
+        enabled = sc.enabled
+        if let d = sc.days, !d.isEmpty { days = Set(d) }
+        if let s = Self.parse(sc.start) { start = s }
+        if let e = Self.parse(sc.end) { end = e }
+    }
+
+    private func commit() {
+        if !enabled { model.setSchedule(days: nil, start: nil, end: nil, enabled: false); return }
+        guard valid else { return }
+        model.setSchedule(days: days.sorted(), start: Self.hhmm(start), end: Self.hhmm(end), enabled: true)
     }
 }
 

@@ -29,6 +29,26 @@ struct PopoverView: View {
     private var homeIcon: String { (wifi.atHome && wifi.authorized) ? "house.fill" : "house" }
     private var homeColor: Color { (wifi.atHome && wifi.authorized) ? .green : .secondary }
 
+    // Compact work-schedule status for the footer (editing lives in Settings > Work Schedule).
+    private var scheduleLine: (text: String, active: Bool)? {
+        guard let sc = s?.schedule, sc.enabled else { return nil }
+        let days = sc.days ?? []
+        let names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        // Contiguous runs read as a range ("Mon-Fri"); anything else lists the days.
+        let daysText: String
+        if days.count >= 2, let f = days.first, let l = days.last, days == Array(f...l) {
+            daysText = "\(names[f - 1])-\(names[l - 1])"
+        } else {
+            daysText = days.map { names[$0 - 1] }.joined(separator: " ")
+        }
+        let t = { (hhmm: String?) -> String in
+            guard let v = hhmm, v.count == 4 else { return "?" }
+            return "\(Int(v.prefix(2)) ?? 0):\(v.suffix(2))"
+        }
+        let inWin = sc.inWindow == true
+        return ("\(daysText) \(t(sc.start))-\(t(sc.end)) \u{00B7} \(inWin ? "work hours, cycling" : "off hours, charging normally")", inWin)
+    }
+
     // Elapsed time in the current on-battery (discharge) run, H:MM, from the server.
     private var onBatteryText: String {
         guard let m = s?.onBatteryMin, m > 0 else { return "--" }
@@ -148,6 +168,14 @@ struct PopoverView: View {
                     HStack(spacing: 5) {
                         Image(systemName: homeIcon).font(.caption2).foregroundStyle(homeColor)
                         Text(homeStatusLine).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                }
+                if let sched = scheduleLine {
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock").font(.caption2)
+                            .foregroundStyle(sched.active ? Color.purple : .secondary)
+                        Text(sched.text).font(.caption).foregroundStyle(.secondary)
                         Spacer()
                     }
                 }

@@ -145,6 +145,31 @@ that - grant it once when prompted) and publishes an at-home signal to
 away, so quitting the app, revoking Location, or any glitch fails safe to normal
 charging. Turning the gate off cycles on every network, matching the pre-gate behavior.
 
+## Work schedule (cycle on weekdays, charge normally after hours)
+
+If your Mac lives on the charger during the workday but you want a stock Mac in the
+evenings and on weekends, give BattCal a schedule in **Settings > Work Schedule** (menu
+bar) or the **Work schedule** card (dashboard): pick the days and a start/end time
+(say Mon-Fri 8:00-18:00). Inside the window BattCal cycles as usual (the home Wi-Fi
+gate still applies on top); outside it the battery charges to 100% and stays there,
+exactly like a Mac without BattCal.
+
+Semantics worth knowing:
+
+- **Manual actions win until the next boundary.** Pause during work hours and it stays
+  paused until the window ends; resume (or pick a mode) in the evening and it cycles
+  until the next workday starts, then the schedule takes over again. To stop cycling
+  for longer than that, turn the schedule off.
+- The config lives in `~/.battcal/schedule` (`DAYS=12345`, `START=0800`, `END=1800`,
+  ISO weekdays 1=Mon..7=Sun); delete the file to disable. The engine enforces it by
+  writing a timed pause until the next window start, so `/api/status` shows the resume
+  time and the UIs label the state "Off hours".
+- API: `GET /api/schedule`, `POST /api/schedule` with
+  `{"enabled":true,"days":[1,2,3,4,5],"start":"08:00","end":"18:00"}` (header
+  `x-battcal: 1`), or `{"enabled":false}` to turn it off.
+- Overnight windows (end before start) are not supported; the window must fall inside
+  one calendar day.
+
 ## Genius Bar prep & evidence report
 
 The dashboard has a collapsible "Genius Bar prep" card that turns BattCal's telemetry

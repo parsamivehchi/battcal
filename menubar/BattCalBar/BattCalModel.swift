@@ -45,9 +45,18 @@ struct EngineStatus: Codable {
     var namespace: String?   // launchctl agent label the server detected; nil on older servers
     var namespaceConflict: Bool?   // both installs' state files present -> controls target the first; nil on older servers
     var onBatteryMin: Double?   // minutes in the current contiguous discharge run; nil when not discharging
+    var pausedBy: String?    // "schedule" (off hours) | "user"; nil when not paused or on older servers
+    var schedule: ScheduleInfo?   // work-schedule config + whether now is inside the window
 
     struct Band: Codable { var low: Int; var high: Int }
     struct PrepInfo: Codable { var active: Bool; var startedAt: Double? }
+    struct ScheduleInfo: Codable {
+        var enabled: Bool
+        var days: [Int]?     // ISO weekdays, 1=Mon..7=Sun
+        var start: String?   // HHMM
+        var end: String?     // HHMM
+        var inWindow: Bool?  // nil when disabled
+    }
 }
 
 struct TelemetryPoint: Codable, Identifiable {
@@ -290,16 +299,45 @@ final class BattCalModel: ObservableObject {
     // Epoch a timed benchmark break auto-resumes at (nil when none is active).
     var breakUntil: Int? { status?.breakUntil }
 
+    // The engine wrote the pause itself because the work schedule says off hours. It carries a
+    // breakUntil epoch (the next window start) but is Normal charging, NOT a benchmark break.
+    var isSchedulePaused: Bool { status?.paused == true && status?.pausedBy == "schedule" }
+
+    // "Mon 8:00"-style text for when scheduled cycling resumes (time only if that is today).
+    var scheduleResumeText: String? {
+        guard isSchedulePaused, let until = status?.breakUntil else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(until))
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInToday(date) ? "H:mm" : "EEE H:mm"
+        return f.string(from: date)
+    }
+
     // Seconds left in an active timed benchmark break, or nil if none. Pass the
     // TimelineView clock so the countdown ticks smoothly while the popover is open.
+    // A schedule pause is NOT a break: its epoch is the next work-hours start.
     func breakRemaining(asOf now: Date = Date()) -> Int? {
-        guard let until = status?.breakUntil else { return nil }
+        guard !isSchedulePaused, let until = status?.breakUntil else { return nil }
         let left = until - Int(now.timeIntervalSince1970)
         return left > 0 ? left : nil
     }
     func setMode(_ m: String) {
         Task {
             let req = Self.controlRequest(URL(string: "api/mode?mode=\(m)", relativeTo: base)!)
+            _ = try? await URLSession.shared.data(for: req)
+            refresh()
+        }
+    }
+
+    // Write the work schedule (or disable it with nil). The server owns ~/.battcal/schedule,
+    // so dashboard and menu bar always agree; status.schedule reflects it on the next poll.
+    func setSchedule(days: [Int]?, start: String?, end: String?, enabled: Bool) {
+        Task {
+            var req = Self.controlRequest(base.appendingPathComponent("api/schedule"))
+            req.setValue("application/json", forHTTPHeaderField: "content-type")
+            let payload: [String: Any] = enabled
+                ? ["enabled": true, "days": days ?? [], "start": start ?? "", "end": end ?? ""]
+                : ["enabled": false]
+            req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
             _ = try? await URLSession.shared.data(for: req)
             refresh()
         }
@@ -315,7 +353,8 @@ final class BattCalModel: ObservableObject {
         // on unplug (unplug suspends cycling in memory only), so honor it regardless of plug state.
         // A timed benchmark break (paused WITH a breakUntil epoch) is NOT Normal: keep the underlying
         // cycling mode active so the selector does not read "Normal charging" while a break counts down.
-        if status?.paused == true, status?.breakUntil == nil { return .normal }
+        // A schedule pause also carries an epoch but IS Normal charging (off hours).
+        if status?.paused == true, status?.breakUntil == nil || isSchedulePaused { return .normal }
         return status?.mode == "calibration" ? .calibration : .longevity
     }
 
@@ -378,8 +417,9 @@ final class BattCalModel: ObservableObject {
         // Paused (Normal charging, no break running) always reads paused - even while macOS
         // trickle-charges or the battery briefly supplements a maxed adapter under load. The
         // engine is not cycling, so the header must never show a flow arrow next to a state
-        // line that says "Normal charging".
-        if s.paused, s.breakUntil == nil { return "pause.circle" }
+        // line that says "Normal charging". A schedule (off-hours) pause counts: it carries
+        // an epoch but is Normal charging, not a break.
+        if s.paused, s.breakUntil == nil || isSchedulePaused { return "pause.circle" }
         // While cycling, direction already lives in the state line ("Draining to 5%") and the
         // Power tile; repeating it here as an arrow was pure duplication next to the big %.
         // The glyph shows the battery LEVEL instead.
@@ -398,7 +438,7 @@ final class BattCalModel: ObservableObject {
         // briefly supplements a maxed adapter under load, BattCal is doing nothing, so a flow arrow
         // here (especially the drain arrow) would falsely imply BattCal is cutting/moving power. The
         // live watts text still carries any incidental flow; the glyph reflects BattCal's STATE.
-        if status?.paused == true, status?.breakUntil == nil { return "pause.circle" }
+        if status?.paused == true, status?.breakUntil == nil || isSchedulePaused { return "pause.circle" }
         // While actually cycling (or during a benchmark break's trickle), mark the true flow
         // direction (bolt = charging, down = draining); a flat sub-1W trickle collapses to the
         // resting band-cycler emblem.
@@ -479,6 +519,8 @@ final class BattCalModel: ObservableObject {
         // charging); BattCal auto-suspends cycling until AC returns.
         if s.plugged == false { return "On battery" }
         if s.paused {
+            // Off hours per the work schedule: normal charging, cycling resumes at the window start.
+            if isSchedulePaused { return "Off hours - resumes \(scheduleResumeText ?? "next work hours")" }
             // A break (paused WITH a future breakUntil) is not the Normal state; the popover banner
             // shows its live countdown, so keep this line consistent with it, not "Normal charging".
             if let until = s.breakUntil, until > Int(Date().timeIntervalSince1970) { return "Benchmark break active" }

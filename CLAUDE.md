@@ -74,6 +74,15 @@ truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
   turns gated cycling off at home (fail-safe away).
 - `scripts/check.sh` is the quality gate (bash -n all scripts, node --check, tsc,
   read-only status smoke); `deploy.sh` runs it first and fails closed.
+- Work schedule: `~/.battcal/schedule` (DAYS=12345 START=0800 END=1800, shared across
+  namespaces like config) gates cycling to a weekly window. The engine enforces it by
+  writing `<epoch> schedule` into the pause file (a timed pause until the next window
+  start); `/var/tmp/<ns>.schedule-phase` detects boundary crossings, and
+  `/var/tmp/<ns>.schedule-override` (touched by the server on every manual
+  pause/resume/break/mode/prep POST) suspends steady-state enforcement until the next
+  boundary ("manual wins until the boundary"). UIs must key "Off hours" on
+  `pausedBy === 'schedule'`, never on breakUntil alone - a schedule pause carries a
+  breakUntil epoch but is Normal charging, not a benchmark break.
 
 ## Conventions
 

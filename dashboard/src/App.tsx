@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  CycleRow, Mode, Status, TelemetryRow,
-  fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postBreak, postMode, postPause, postResume,
+  CycleRow, Mode, Schedule, Status, TelemetryRow,
+  fetchCycles, fetchLog, fetchStatus, fetchTelemetry, postBreak, postMode, postPause, postResume, postSchedule,
 } from './api';
 import { niceTimeTicks, powerStep, steppedScale } from './chartUtils';
 import { GeniusBarPrep } from './GeniusBarPrep';
@@ -60,10 +60,26 @@ function flowTargetOf(s: Status | null): number | null {
   }
 }
 
+// "8:00" today, "Mon 8:00" any other day - when scheduled cycling resumes.
+function fmtResume(epoch: number): string {
+  const d = new Date(epoch * 1000);
+  const time = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
+}
+
 function stateMeta(s: Status | null) {
   // Paused / stopped come straight from state; the cycling states are driven by the real
   // power flow so an activity hold (state "drain" but charging) reads correctly.
   if (!s || s.state === 'stopped') return { label: 'Engine off - normal charging', color: 'var(--text-muted)', icon: '○' };
+  // The work schedule's off-hours pause is normal charging with a known resume time.
+  if (s.paused && s.pausedBy === 'schedule') {
+    return {
+      label: `Off hours - charging normally${s.breakUntil ? `, cycling resumes ${fmtResume(s.breakUntil)}` : ''}`,
+      color: 'var(--series-1)', icon: '⏸',
+    };
+  }
   if (s.paused) return { label: 'Paused - charging like normal', color: 'var(--series-1)', icon: '⏸' };
   switch (flowOf(s)) {
     case 'charging': return { label: `Charging to ${flowTargetOf(s) ?? s.band.high}%`, color: 'var(--status-good)', icon: '⇡' };
@@ -114,6 +130,77 @@ const HOW_ROWS: Array<{ key: string; title: string; body: string }> = [
     body: 'The MagSafe LED is BattCal\'s status light (the hardware only has amber and green, no other colors exist). Dark while plugged in = draining in longevity mode (a normal Mac never shows a dark connector, so dark = BattCal is working). Slow green pulse = calibration drain. Amber = actually charging. Green = at target, not charging. Paused or off = normal Apple behavior.',
   },
 ];
+
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const toColon = (hhmm?: string) => (hhmm && hhmm.length === 4 ? `${hhmm.slice(0, 2)}:${hhmm.slice(2)}` : '');
+
+// Work-schedule editor: cycle only inside a weekly window, Apple-default charging outside it.
+// The server file is the source of truth; controls seed from status.schedule once and every
+// edit POSTs immediately (matching the menu bar's Settings > Work Schedule pane).
+function ScheduleCard({ schedule, onSave }: {
+  schedule?: Schedule;
+  onSave: (s: { enabled: boolean; days?: number[]; start?: string; end?: string }) => void;
+}) {
+  const [enabled, setEnabled] = useState(false);
+  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [start, setStart] = useState('08:00');
+  const [end, setEnd] = useState('18:00');
+  const [seeded, setSeeded] = useState(false);
+
+  useEffect(() => {
+    if (seeded || !schedule) return;
+    setSeeded(true);
+    setEnabled(schedule.enabled);
+    if (schedule.days?.length) setDays(schedule.days);
+    if (schedule.start) setStart(toColon(schedule.start));
+    if (schedule.end) setEnd(toColon(schedule.end));
+  }, [schedule, seeded]);
+
+  const valid = days.length > 0 && start < end;
+  const save = (en: boolean, d: number[], s: string, e: string) => {
+    if (!en) { onSave({ enabled: false }); return; }
+    if (!d.length || s >= e) return; // invalid edit in progress; hint below explains
+    onSave({ enabled: true, days: d, start: s, end: e });
+  };
+  const toggleDay = (d: number) => {
+    const next = days.includes(d) ? days.filter((x) => x !== d) : [...days, d].sort();
+    setDays(next); save(enabled, next, start, end);
+  };
+
+  return (
+    <div className="card">
+      <h2>Work schedule</h2>
+      <p className="hint">
+        Cycle only inside this window; outside it (evenings, weekends) the battery charges normally
+        to 100% like a stock Mac. Manual pause/resume wins until the next boundary.
+      </p>
+      <div className="filters" style={{ margin: 0 }}>
+        <label className="label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <input type="checkbox" checked={enabled}
+            onChange={(ev) => { setEnabled(ev.target.checked); save(ev.target.checked, days, start, end); }} />
+          Enabled
+        </label>
+        <div className="seg" role="group" aria-label="Schedule days" style={{ opacity: enabled ? 1 : 0.5 }}>
+          {DAY_NAMES.map((n, i) => (
+            <button key={n} className={days.includes(i + 1) ? 'on' : ''} aria-pressed={days.includes(i + 1)}
+              disabled={!enabled} onClick={() => toggleDay(i + 1)}>{n}</button>
+          ))}
+        </div>
+        <span className="label">from</span>
+        <input type="time" value={start} disabled={!enabled}
+          onChange={(ev) => { setStart(ev.target.value); save(enabled, days, ev.target.value, end); }} />
+        <span className="label">to</span>
+        <input type="time" value={end} disabled={!enabled}
+          onChange={(ev) => { setEnd(ev.target.value); save(enabled, days, start, ev.target.value); }} />
+      </div>
+      {enabled && !valid && (
+        <p className="hint" role="alert" style={{ marginTop: 6 }}>
+          Pick at least one day and a start before the end - the schedule keeps its last valid window until then.
+        </p>
+      )}
+    </div>
+  );
+}
 
 // Shown while the recharts chunk loads. Mirrors the two chart grids and reserves each card's
 // height so the content below does not jump when the charts mount (no layout shift).
@@ -211,7 +298,9 @@ export default function App() {
   // normal - that must never claim "adapter cut".
   const discharging = status?.batteryW != null && status.batteryW < -0.5;
   const throttled = discharging && (status?.adapterCut === true || status?.plugged === false);
-  const breakUntilMs = status?.breakUntil != null ? status.breakUntil * 1000 : null;
+  // A schedule (off-hours) pause also carries a breakUntil epoch (the next window start)
+  // but is NOT a benchmark break - the state pill explains it, no countdown banner.
+  const breakUntilMs = status?.breakUntil != null && status.pausedBy !== 'schedule' ? status.breakUntil * 1000 : null;
   const breakActive = breakUntilMs != null && breakUntilMs > now;
   // Tick the 1s clock only while a benchmark-break countdown is on screen. A plain drain shows a
   // static throttle banner with no countdown, so ticking every second during it just re-rendered
@@ -452,6 +541,9 @@ export default function App() {
           impact={impact} status={status}
         />
       </Suspense>
+
+      <ScheduleCard schedule={status?.schedule}
+        onSave={(p) => doPost(() => postSchedule(p), 'Schedule update')} />
 
       <GeniusBarPrep status={status} onChange={refreshStatus} />
 

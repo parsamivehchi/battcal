@@ -6,7 +6,7 @@
 // a legacy/personal install (battery-calibrate.*), detected at request time.
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, createReadStream } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, mkdirSync, createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, extname, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,7 @@ const NAMESPACES = [
     cycles: join(HOME, 'Library/Logs/battery-calibrate-history.csv'),
     log: join(HOME, 'Library/Logs/battery-calibrate.log'),
     onBatteryStart: '/var/tmp/battery-calibrate.onbatterystart',
+    schedOverride: '/var/tmp/battery-calibrate.schedule-override',
   },
   {
     // Published install (install.sh AGENT_LABEL=com.battcal.calibrate).
@@ -38,6 +39,7 @@ const NAMESPACES = [
     cycles: join(HOME, 'Library/Logs/battcal-history.csv'),
     log: join(HOME, 'Library/Logs/battcal.log'),
     onBatteryStart: '/var/tmp/battcal.onbatterystart',
+    schedOverride: '/var/tmp/battcal.schedule-override',
   },
 ];
 const MODES = ['longevity', 'calibration'];
@@ -52,6 +54,35 @@ function readMode(n) {
   }
 }
 const TELEMETRY = join(HOME, 'Library/Logs/battcal-telemetry.csv');
+
+// Work schedule: ~/.battcal/schedule is shared across namespaces (like ~/.battcal/config).
+// Format mirrors the engine's parser: DAYS=<ISO weekday digits 1-7>, START/END=HHMM.
+const SCHEDULE_FILE = join(HOME, '.battcal', 'schedule');
+function readSchedule() {
+  try {
+    const txt = readFileSync(SCHEDULE_FILE, 'utf8');
+    const days = (txt.match(/^DAYS=([1-7]{1,7})/m) || [])[1];
+    const start = (txt.match(/^START=(\d{4})/m) || [])[1];
+    const end = (txt.match(/^END=(\d{4})/m) || [])[1];
+    if (!days || !start || !end || Number(start) >= Number(end)) return { enabled: false };
+    return { enabled: true, days: [...new Set(days.split(''))].map(Number).sort(), start, end };
+  } catch {
+    return { enabled: false };
+  }
+}
+// Inside the cycling window right now? (Local time; Date.getDay() is 0=Sun, ISO wants 1-7.)
+function scheduleInWindow(s) {
+  if (!s.enabled) return null;
+  const now = new Date();
+  const isoDow = now.getDay() === 0 ? 7 : now.getDay();
+  const hhmm = now.getHours() * 100 + now.getMinutes();
+  return s.days.includes(isoDow) && hhmm >= Number(s.start) && hhmm < Number(s.end);
+}
+// Manual pause/resume/mode/prep actions suspend the engine's steady-state schedule
+// enforcement until the next boundary; the engine deletes the file at each boundary.
+function touchOverride() {
+  try { writeFileSync(ns().schedOverride, ''); } catch {}
+}
 
 // First namespace whose state file exists wins (personal before published), so a stale
 // leftover install can silently receive the controls. Deterministic but surprising:
@@ -170,15 +201,21 @@ function status() {
   let state = 'stopped';
   try { state = readFileSync(n.state, 'utf8').trim(); } catch {}
   const paused = existsSync(n.pause);
-  // A numeric epoch in the pause file = a timed "benchmark break" (auto-resumes);
-  // an empty pause file = an indefinite Normal-charging pause.
+  // Pause file contents: empty = indefinite user pause; "<epoch>" = timed benchmark
+  // break; "<epoch> schedule" = the engine's off-hours pause (work schedule). Parse the
+  // leading digits (a bare Number() would NaN on the schedule tag) and keep breakUntil
+  // populated for schedule pauses too, so every UI can show the resume time.
   let breakUntil = null;
+  let pausedBy = paused ? 'user' : null;
   if (paused) {
     try {
-      const t = Number(readFileSync(n.pause, 'utf8').trim());
+      const txt = readFileSync(n.pause, 'utf8');
+      const t = Number((txt.match(/\d+/) || [])[0]);
       if (Number.isFinite(t) && t > 0) breakUntil = t;
+      if (/schedule/.test(txt)) pausedBy = 'schedule';
     } catch {}
   }
+  const schedule = readSchedule();
   const cyclesRows = readCsv(n.cycles);
   const lastCycle = cyclesRows.at(-1) || null;
   const mode = readMode(n);
@@ -194,6 +231,8 @@ function status() {
     state: paused ? 'paused' : state,
     paused,
     breakUntil,
+    pausedBy, // 'schedule' (off hours) | 'user' | null
+    schedule: { ...schedule, inWindow: scheduleInWindow(schedule) },
     namespace: n.agentLabel, // launchctl agent label, so the menu bar controls the right one on any install
     namespaceConflict: namespaceConflict(), // both installs' state files exist; controls target the first (personal) one
     mode,
@@ -442,6 +481,7 @@ createServer((req, res) => {
       writeFileSync(n.mode, 'calibration\n');
       try { unlinkSync(n.pause); } catch {}
       writeFileSync(n.prep, `${Math.floor(Date.now() / 1000)} ${prevMode}\n`);
+      touchOverride(); // prep clears the pause; keep the schedule from re-pausing it next poll
       return json(res, 200, { prep: true, mode: 'calibration' });
     }
     if (p === '/api/prep' && req.method === 'DELETE') {
@@ -457,14 +497,15 @@ createServer((req, res) => {
       writeFileSync(n.mode, prevMode + '\n');
       return json(res, 200, { prep: false, mode: prevMode });
     }
-    if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); return json(res, 200, { paused: true }); }
-    if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} return json(res, 200, { paused: false }); }
+    if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); touchOverride(); return json(res, 200, { paused: true }); }
+    if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} touchOverride(); return json(res, 200, { paused: false }); }
     if (p === '/api/break' && req.method === 'POST') {
       // Timed benchmark break: pause now, auto-resume after N minutes. The engine
       // honors the epoch, so the break ends even with every UI closed.
       const mins = Math.max(1, Math.min(240, Math.round(Number(url.searchParams.get('minutes')) || 30)));
       const until = Math.floor(Date.now() / 1000) + mins * 60;
       writeFileSync(ns().pause, String(until) + '\n');
+      touchOverride();
       return json(res, 200, { paused: true, breakUntil: until, minutes: mins });
     }
     if (p === '/api/mode' && req.method === 'POST') {
@@ -480,7 +521,49 @@ createServer((req, res) => {
           try { m = JSON.parse(body).mode || m; } catch {}
           if (!MODES.includes(m)) return json(res, 400, { error: `mode must be one of: ${MODES.join(', ')}` });
           writeFileSync(ns().mode, m + '\n');
+          touchOverride();
           return json(res, 200, { mode: m, band: BANDS[m] });
+        } catch (e) {
+          return json(res, 500, { error: String(e?.message || e) });
+        }
+      });
+      return;
+    }
+    if (p === '/api/schedule' && req.method === 'GET') {
+      const s = readSchedule();
+      return json(res, 200, { ...s, inWindow: scheduleInWindow(s) });
+    }
+    if (p === '/api/schedule' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { if (body.length < 1e6) body += c; });
+      // Same guard as /api/mode: 'end' runs after the outer try/catch returned.
+      req.on('end', () => {
+        try {
+          let cfg = {};
+          try { cfg = JSON.parse(body); } catch {}
+          if (cfg.enabled === false) {
+            try { unlinkSync(SCHEDULE_FILE); } catch {}
+            return json(res, 200, { enabled: false });
+          }
+          // Accept "0800" or "08:00"; store HHMM (the engine's format).
+          const hhmm = (v) => {
+            const m = String(v ?? '').match(/^(\d{1,2}):?(\d{2})$/);
+            if (!m) return null;
+            const h = Number(m[1]), min = Number(m[2]);
+            return h <= 23 && min <= 59 ? String(h).padStart(2, '0') + m[2] : null;
+          };
+          const days = [...new Set((Array.isArray(cfg.days) ? cfg.days : []).map(Number))].sort();
+          const start = hhmm(cfg.start), end = hhmm(cfg.end);
+          if (!days.length || days.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) {
+            return json(res, 400, { error: 'days must be a non-empty array of ISO weekdays 1-7' });
+          }
+          if (!start || !end || Number(start) >= Number(end)) {
+            return json(res, 400, { error: 'start/end must be HHMM (or HH:MM) with start < end' });
+          }
+          mkdirSync(join(HOME, '.battcal'), { recursive: true });
+          writeFileSync(SCHEDULE_FILE, `DAYS=${days.join('')}\nSTART=${start}\nEND=${end}\n`);
+          const s = readSchedule();
+          return json(res, 200, { ...s, inWindow: scheduleInWindow(s) });
         } catch (e) {
           return json(res, 500, { error: String(e?.message || e) });
         }

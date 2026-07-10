@@ -22,6 +22,9 @@
 # Benchmark break (timed pause, auto-resumes): write a future unix epoch into the
 #             pause file, e.g. echo $(( $(date +%s) + 1800 )) > /var/tmp/battcal.pause
 #             (empty file = indefinite pause; a numeric epoch resumes once it passes)
+# Schedule:   ~/.battcal/schedule with DAYS=12345 START=0800 END=1800 cycles only
+#             inside that window (off hours = normal Apple charging to 100%).
+#             Manual pause/resume/mode actions win until the next boundary.
 # Off:        launchctl bootout gui/$(id -u)/com.battcal.calibrate ; batt adapter enable
 # Watch:      tail -f ~/Library/Logs/battcal.log
 # History:    ~/Library/Logs/battcal-history.csv (one row per cycle)
@@ -43,6 +46,13 @@ RESTART_MARKER=/var/tmp/battcal.managed-restart   # deploy.sh touches this right
 HOMEGATE_FLAG="$HOME/.battcal/homegate.on"   # exists => the "only cycle on home Wi-Fi" gate is ON
 ATHOME_FILE=/var/tmp/battcal-athome          # app writes "1|0" + a unix ts; stale/missing => away
 ATHOME_MAX_AGE=90                            # seconds; an older signal is treated as away (fail-safe)
+# Work-schedule gate. ~/.battcal/schedule (shared, like config) holds DAYS=12345 START=0800 END=1800;
+# file present + valid => cycle only inside the window, off hours = normal Apple charging. The engine
+# enforces it by writing the next window-start epoch into the pause file ("<epoch> schedule"), so the
+# existing timed-pause logic does the resuming. See schedule_check() below.
+SCHEDULE_FILE="$HOME/.battcal/schedule"
+SCHED_PHASE_FILE=/var/tmp/battcal.schedule-phase       # last observed phase (in|out); detects boundary crossings
+SCHED_OVERRIDE_FILE=/var/tmp/battcal.schedule-override # touched by the server on manual actions; suspends steady-state enforcement until the next boundary
 LOG="$HOME/Library/Logs/battcal.log"
 CSV="$HOME/Library/Logs/battcal-history.csv"
 TELEMETRY="$HOME/Library/Logs/battcal-telemetry.csv"
@@ -111,6 +121,103 @@ home_ok() {
   [ "$age" -le "$ATHOME_MAX_AGE" ] || return 1   # stale signal => away
   [ "$(head -1 "$ATHOME_FILE" 2>/dev/null)" = "1" ]
 }
+
+# --- Work-schedule gate -------------------------------------------------------
+# Parse ~/.battcal/schedule (never sourced - defensively extracted), cached on CONTENT
+# (mtime has 1s resolution, so two rapid UI edits in the same second would stick the
+# engine on the first; the file is 3 lines, re-reading every poll is free). Valid file
+# => SCHED_VALID=1 with SCHED_DAYS (ISO weekday digits, 1=Mon..7=Sun) and
+# SCHED_START/SCHED_END (HHMM, start < end). Invalid => logged once, schedule ignored
+# (fail-safe: behaves exactly like no schedule). NOTE: HHMM values keep leading zeros;
+# compare them only with [ -ge/-lt ] (decimal), never $(( )) (octal trap).
+SCHED_RAW="unread" SCHED_DAYS="" SCHED_START="" SCHED_END="" SCHED_VALID=0
+parse_schedule() {
+  local raw
+  raw=$(cat "$SCHEDULE_FILE" 2>/dev/null)
+  if [ -z "$raw" ]; then   # missing (or empty) file = schedule off, silently
+    SCHED_VALID=0; SCHED_RAW=""; return
+  fi
+  [ "$raw" = "$SCHED_RAW" ] && return
+  SCHED_RAW=$raw
+  SCHED_DAYS=$(printf '%s\n' "$raw" | sed -n 's/^DAYS=\([1-7]\{1,7\}\).*/\1/p' | head -1)
+  SCHED_START=$(printf '%s\n' "$raw" | sed -n 's/^START=\([0-9]\{4\}\).*/\1/p' | head -1)
+  SCHED_END=$(printf '%s\n' "$raw" | sed -n 's/^END=\([0-9]\{4\}\).*/\1/p' | head -1)
+  if [ -n "$SCHED_DAYS" ] && [ -n "$SCHED_START" ] && [ -n "$SCHED_END" ] \
+     && [ "$SCHED_START" -lt "$SCHED_END" ] 2>/dev/null; then
+    SCHED_VALID=1
+    log "schedule loaded: days=$SCHED_DAYS window=$SCHED_START-$SCHED_END"
+  else
+    SCHED_VALID=0
+    log "schedule file invalid - ignored (need DAYS=<1-7 digits>, START/END=HHMM, START<END)"
+  fi
+}
+
+# Current schedule phase: "in" (cycling window) or "out" (off hours).
+schedule_phase() {
+  local dow now
+  dow=$(date +%u); now=$(date +%H%M)
+  case "$SCHED_DAYS" in *"$dow"*)
+    if [ "$now" -ge "$SCHED_START" ] && [ "$now" -lt "$SCHED_END" ]; then echo in; return; fi ;;
+  esac
+  echo out
+}
+
+# Epoch of the next window start (today if before START, else the next scheduled day).
+next_start_epoch() {
+  local i d dow now
+  dow=$(date +%u); now=$(date +%H%M)
+  for i in 0 1 2 3 4 5 6 7; do
+    d=$(( (dow - 1 + i) % 7 + 1 ))
+    case "$SCHED_DAYS" in *"$d"*) ;; *) continue ;; esac
+    if [ "$i" -eq 0 ] && [ "$now" -ge "$SCHED_START" ]; then continue; fi
+    date -j -v+"${i}"d -f "%H%M%S" "${SCHED_START}00" +%s 2>/dev/null
+    return
+  done
+}
+
+# Write the schedule pause: a timed pause until the next window start, tagged "schedule"
+# so the server can label it off-hours (tr -dc '0-9' in the pause reader ignores the tag).
+schedule_pause() {
+  local until
+  until=$(next_start_epoch)
+  if [ -z "$until" ]; then
+    log "schedule: could not compute next window start - leaving state untouched"
+    return
+  fi
+  log "schedule: off hours - normal charging until $(date -r "$until" '+%a %H:%M' 2>/dev/null)"
+  echo "$until schedule" > "$PAUSE_FILE"
+}
+
+# Called at the top of every poll, BEFORE the pause check. Boundary transitions clear the
+# manual override and assert the schedule (out => timed pause, in => resume). Steady-state:
+# off hours with no pause and no override => re-assert the pause (covers restarts and
+# sleeping through the boundary). Inside the window nothing is forced, so a manual pause
+# during work hours is respected until the next boundary.
+schedule_check() {
+  parse_schedule
+  if [ "$SCHED_VALID" -ne 1 ]; then
+    rm -f "$SCHED_PHASE_FILE" "$SCHED_OVERRIDE_FILE"
+    return
+  fi
+  local phase prev
+  phase=$(schedule_phase)
+  prev=$(cat "$SCHED_PHASE_FILE" 2>/dev/null)
+  echo "$phase" > "$SCHED_PHASE_FILE"
+  if [ -n "$prev" ] && [ "$prev" != "$phase" ]; then
+    rm -f "$SCHED_OVERRIDE_FILE"
+    if [ "$phase" = "out" ]; then
+      schedule_pause
+    else
+      log "schedule: work hours started - resuming cycling"
+      rm -f "$PAUSE_FILE"
+    fi
+    return
+  fi
+  if [ "$phase" = "out" ] && [ ! -f "$PAUSE_FILE" ] && [ ! -f "$SCHED_OVERRIDE_FILE" ]; then
+    schedule_pause
+  fi
+}
+# --- end work-schedule gate ----------------------------------------------------
 
 # Hold the adapter (full plugged-in performance) ONLY when the CPU is genuinely pegged by
 # a heavy sustained job - the sole case where running on battery would actually throttle
@@ -247,6 +354,10 @@ DRAIN_PAUSED=0   # 1 while we hand power back mid-drain (user active or charger 
 IDLE_STREAK=0    # consecutive low-load polls while paused; drives the resume debounce
 
 while true; do
+  # Work schedule (if ~/.battcal/schedule exists): assert cycling inside the window,
+  # normal Apple charging outside it, before the pause switch reads the result.
+  schedule_check
+
   # User pause switch. Empty file = indefinite pause (normal charging). A numeric
   # future epoch = timed "benchmark break": auto-resume once now passes it, so a
   # full-speed benchmark window closes itself even if every UI is shut.

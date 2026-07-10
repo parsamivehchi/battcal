@@ -27,7 +27,17 @@ export interface Status {
   namespace: string;           // the install controls target (personal 'battery-calibrate' vs OSS 'battcal')
   namespaceConflict: boolean;  // both installs' state files exist; controls silently target the first (personal)
   prep: { active: boolean; startedAt: number | null } | null;
+  pausedBy?: 'schedule' | 'user' | null;  // 'schedule' = the engine's off-hours pause; undefined on older servers
+  schedule?: Schedule;         // work-schedule config + whether now is inside the window
   updatedAt: string;
+}
+
+export interface Schedule {
+  enabled: boolean;
+  days?: number[];        // ISO weekdays, 1=Mon..7=Sun
+  start?: string;         // HHMM
+  end?: string;           // HHMM
+  inWindow?: boolean | null;
 }
 
 export interface TelemetryRow {
@@ -93,3 +103,11 @@ export const postMode = (mode: Mode) => send(`/api/mode?mode=${mode}`, 'POST');
 export const fetchEvidence = () => get<Evidence>('/api/evidence');
 export const postPrep = () => send('/api/prep', 'POST');
 export const endPrep = () => send('/api/prep', 'DELETE');
+export const fetchSchedule = () => get<Schedule>('/api/schedule');
+// Enable/update: pass days + HHMM start/end. Disable: postSchedule({ enabled: false }).
+export const postSchedule = (s: { enabled: boolean; days?: number[]; start?: string; end?: string }) =>
+  fetch('/api/schedule', {
+    method: 'POST',
+    headers: { 'x-battcal': '1', 'content-type': 'application/json' },
+    body: JSON.stringify(s),
+  });
