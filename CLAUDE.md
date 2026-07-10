@@ -73,7 +73,13 @@ truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
   `defaults read com.parsa.battcalbar homeSSIDs`; blanking or losing that key silently
   turns gated cycling off at home (fail-safe away).
 - `scripts/check.sh` is the quality gate (bash -n all scripts, node --check, tsc,
-  read-only status smoke); `deploy.sh` runs it first and fails closed.
+  swiftc -parse on menubar sources, read-only status smoke); `deploy.sh` runs it
+  first and fails closed.
+- The engine judges `/var/tmp/battcal-athome` freshness by file MTIME with
+  ATHOME_MAX_AGE=90s (stale = AWAY, fail-safe). The menu bar rewrites it on value
+  change OR mtime age > 60s; never make that write purely change-driven or home
+  cycling silently stops. The `battcal-wifi.ssid` breadcrumb has no freshness
+  contract and writes only on change.
 - Work schedule: `~/.battcal/schedule` (DAYS=12345 START=0800 END=1800, shared across
   namespaces like config) gates cycling to a weekly window. The engine enforces it by
   writing `<epoch> schedule` into the pause file (a timed pause until the next window
