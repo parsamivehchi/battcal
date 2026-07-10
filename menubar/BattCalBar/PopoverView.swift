@@ -33,7 +33,7 @@ struct PopoverView: View {
     private var scheduleLine: (text: String, active: Bool)? {
         guard let sc = s?.schedule, sc.enabled else { return nil }
         let days = sc.days ?? []
-        let names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        let names = BattFormat.weekdayAbbrev
         // Contiguous runs read as a range ("Mon-Fri"); anything else lists the days.
         let daysText: String
         if days.count >= 2, let f = days.first, let l = days.last, days == Array(f...l) {
@@ -92,25 +92,24 @@ struct PopoverView: View {
             // Two installs present: controls silently target the first (personal) namespace, so
             // warn and name which one. Mirrors the dashboard's amber notice banner.
             if model.status?.namespaceConflict == true {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2).foregroundStyle(.orange)
-                    Text("Two BattCal installs detected. Controls target \(model.status?.namespace ?? "the first install"). Remove the unused one.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 5).padding(.horizontal, 8)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                notice("exclamationmark.triangle.fill", .orange,
+                       "Two BattCal installs detected. Controls target \(model.status?.namespace ?? "the first install"). Remove the unused one.")
             }
 
-            // Throttle warning while draining, or a live countdown during a break. The
-            // condition lives INSIDE the ticking TimelineView so the banner clears the
-            // second a break elapses, instead of leaving a blank card until the next
-            // 15 s poll lets the server clear breakUntil.
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                if model.isCyclingDrain || model.breakRemaining(asOf: ctx.date) != nil {
-                    PowerBanner(model: model, now: ctx.date)
+            // Throttle warning while draining, or a live countdown during a break. Only the
+            // countdown needs a per-second clock, so the TimelineView exists ONLY while a
+            // real break epoch is set (a schedule pause carries an epoch too but shows no
+            // countdown; its far-future clock must not tick all evening). The inner check
+            // still clears the banner the second a break elapses; the plain drain warning
+            // renders statically with no ticking.
+            if model.breakUntil != nil, !model.isSchedulePaused {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    if model.isCyclingDrain || model.breakRemaining(asOf: ctx.date) != nil {
+                        PowerBanner(model: model, now: ctx.date)
+                    }
                 }
+            } else if model.isCyclingDrain {
+                PowerBanner(model: model, now: Date())
             }
 
             // Battery % history. BattCal shows no temperature (a separate app covers it), so the
@@ -122,6 +121,16 @@ struct PopoverView: View {
             // Mode selector
             Text("MODE").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).padding(.top, 2)
             ModeSelector(model: model)
+            // Genius Bar prep (dashboard-started) pins calibration mode; badge it here so the
+            // selector reading "Calibration" is never a mystery. Picking another mode clears it.
+            if model.prepActive {
+                notice("wrench.and.screwdriver.fill", .orange,
+                       "Genius Bar prep running - holds calibration until stopped. Picking another mode stops it.")
+            }
+            // macOS's own battery verdict, only when it is news ("Service Recommended").
+            if let cond = model.serviceCondition {
+                notice("exclamationmark.circle.fill", .red, "macOS battery condition: \(cond)")
+            }
             if !model.reachable {
                 Text("BattCal server offline - controls disabled").font(.caption).foregroundStyle(.secondary)
             }
@@ -140,7 +149,8 @@ struct PopoverView: View {
                 }
                 GridRow {
                     stat("Cycles", "arrow.triangle.2.circlepath", s?.cycles.map { "\($0)" } ?? "--")
-                    stat("On battery", "battery.25percent", onBatteryText)
+                    stat("On battery", s?.pct.map { BattCalModel.batteryGlyph(for: $0) } ?? "battery.25percent",
+                         onBatteryText)
                 }
             }
             .padding(.vertical, 2)
@@ -209,6 +219,18 @@ struct PopoverView: View {
             parts.append(s?.mode == "calibration" ? "charger LED pulses green" : "charger LED dark = BattCal draining")
         }
         return parts.joined(separator: " \u{00B7} ")
+    }
+
+    // Compact tinted notice row (the namespace-conflict banner grammar), shared by every
+    // inline warning so they read as one family.
+    private func notice(_ symbol: String, _ tint: Color, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: symbol).font(.caption2).foregroundStyle(tint)
+            Text(text).font(.caption2).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5).padding(.horizontal, 8)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
     }
 
     // Symbol-first stat tile, matching powerStat() so the whole grid reads consistently:

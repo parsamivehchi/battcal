@@ -1,6 +1,20 @@
 import Foundation
 import SwiftUI
 import UserNotifications
+import os
+
+// Unified loggers (Console.app: subsystem com.parsa.battcalbar). Failures that used to be
+// swallowed silently (decode drift, auth denials, rejected control POSTs) land here.
+enum BattLog {
+    static let model = Logger(subsystem: "com.parsa.battcalbar", category: "model")
+    static let wifi = Logger(subsystem: "com.parsa.battcalbar", category: "wifi")
+    static let ui = Logger(subsystem: "com.parsa.battcalbar", category: "ui")
+}
+
+// Shared display vocabulary (single source for the popover footer + the schedule pane).
+enum BattFormat {
+    static let weekdayAbbrev = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+}
 
 // What the menu bar label shows next to the battery glyph. macOS already has
 // its own percent readout, so the smart default is time-to-target.
@@ -85,7 +99,16 @@ final class BattCalModel: ObservableObject {
     @Published var liveBuffer: [TelemetryPoint] = []   // live /api/status samples, so the chart survives a pause
     @Published var engineLoaded = true
     @Published var reachable = true
+    // Set when a control request is rejected (non-2xx); cleared on the next success. Surfaced
+    // inline where the action lives (e.g. the schedule pane) instead of failing silently.
+    @Published var lastActionError: String?
     private var ampHistory: [Double] = []
+
+    // True while a chart is actually on screen (popover or window open). Telemetry only
+    // feeds the chart, so background polls skip the fetch entirely when this is false.
+    var chartVisible = false
+    private var engineCheckTick = 0
+    private var forceEngineCheck = false
 
     private let base = URL(string: "http://localhost:4437")!
     private var timer: Timer?
@@ -96,7 +119,13 @@ final class BattCalModel: ObservableObject {
     private var agentPlist: String { ("~/Library/LaunchAgents/\(agentLabel).plist" as NSString).expandingTildeInPath }
 
     init() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, err in
+            if let err {
+                BattLog.model.error("notification auth failed: \(err.localizedDescription, privacy: .public)")
+            } else if !granted {
+                BattLog.model.notice("notifications not authorized; cycle/health alerts will not fire")
+            }
+        }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -111,33 +140,48 @@ final class BattCalModel: ObservableObject {
         Task {
             do {
                 let (d, _) = try await URLSession.shared.data(from: base.appendingPathComponent("api/status"))
-                status = try JSONDecoder().decode(EngineStatus.self, from: d)
+                // The server answered: reachable regardless of what the payload decodes to.
                 reachable = true
-                checkNotifications()
-                if let a = status?.amperageMa {
-                    ampHistory.append(a)
-                    if ampHistory.count > 5 { ampHistory.removeFirst(ampHistory.count - 5) }
-                }
-                // Roll a live buffer of status samples so the popover chart stays populated while
-                // paused (the engine writes the telemetry CSV only while cycling). Cap ~3h at 15s.
-                if let s = status, let p = s.pct {
-                    liveBuffer.append(TelemetryPoint(ts: TelemetryPoint.parser.string(from: Date()),
-                                                     pct: Double(p)))
-                    if liveBuffer.count > 720 { liveBuffer.removeFirst(liveBuffer.count - 720) }
+                do {
+                    status = try JSONDecoder().decode(EngineStatus.self, from: d)
+                    checkNotifications()
+                    if let a = status?.amperageMa {
+                        ampHistory.append(a)
+                        if ampHistory.count > 5 { ampHistory.removeFirst(ampHistory.count - 5) }
+                    }
+                    // Roll a live buffer of status samples so the popover chart stays populated while
+                    // paused (the engine writes the telemetry CSV only while cycling). Cap ~3h at 15s.
+                    if let s = status, let p = s.pct {
+                        liveBuffer.append(TelemetryPoint(ts: TelemetryPoint.parser.string(from: Date()),
+                                                         pct: Double(p)))
+                        if liveBuffer.count > 720 { liveBuffer.removeFirst(liveBuffer.count - 720) }
+                    }
+                } catch {
+                    // Schema drift, not an outage: keep the last-known status on screen instead
+                    // of blanking the UI or falsely claiming "server offline" over a decode miss.
+                    BattLog.model.error("status decode failed: \(String(describing: error), privacy: .public)")
                 }
             } catch {
-                reachable = false
+                reachable = false   // genuine transport failure: nothing answered on 4437
             }
-            if let url = URL(string: "api/telemetry?hours=3", relativeTo: base),
+            // Telemetry only feeds the chart, so skip the fetch while no chart is on screen
+            // or the server is down; the liveBuffer keeps the chart warm for the next open.
+            if chartVisible, reachable,
+               let url = URL(string: "api/telemetry?hours=3", relativeTo: base),
                let (d, _) = try? await URLSession.shared.data(from: url),
                let pts = try? JSONDecoder().decode([TelemetryPoint].self, from: d) {
                 spark = pts
             }
-            // Run the blocking `launchctl print` off the main actor so the 15s poll never
-            // stalls the UI; the result assignment resumes back on MainActor after the await.
-            let label = agentLabel
-            let loaded = await Task.detached { Self.run("/bin/launchctl", ["print", "gui/\(getuid())/\(label)"]) == 0 }.value
-            engineLoaded = loaded
+            // `launchctl print` costs a process spawn, so probe every 4th poll (~1 min) instead
+            // of every 15 s; in-app actions that can change the load state set forceEngineCheck
+            // for an immediate re-probe. Detached so the poll never stalls the main actor.
+            engineCheckTick += 1
+            if engineCheckTick % 4 == 1 || forceEngineCheck {
+                forceEngineCheck = false
+                let label = agentLabel
+                let loaded = await Task.detached { Self.run("/bin/launchctl", ["print", "gui/\(getuid())/\(label)"]) == 0 }.value
+                engineLoaded = loaded
+            }
         }
     }
 
@@ -171,10 +215,10 @@ final class BattCalModel: ObservableObject {
     }
 
     // Every state-changing request carries the x-battcal header the server requires
-    // (CSRF guard); a bare POST is rejected with 403.
-    private static func controlRequest(_ url: URL) -> URLRequest {
+    // (CSRF guard); a bare POST/DELETE is rejected with 403.
+    private static func controlRequest(_ url: URL, method: String = "POST") -> URLRequest {
         var req = URLRequest(url: url)
-        req.httpMethod = "POST"
+        req.httpMethod = method
         req.setValue("1", forHTTPHeaderField: "x-battcal")
         return req
     }
@@ -203,7 +247,10 @@ final class BattCalModel: ObservableObject {
     // True while the battery is measurably discharging. Direction only - it does NOT
     // imply BattCal did anything: paused at 100% under a heavy load, the battery briefly
     // supplements a maxed adapter and this reads true while charging stays normal.
-    var isDischarging: Bool { reachable && engineLoaded && (status?.batteryW ?? 0) < -0.5 }
+    // Deliberately NOT gated on engineLoaded: the throttle warning keys on the server's
+    // adapterCut ground truth (below), and a stale launchctl probe must never hide it.
+    // The dashboard applies the same rule (App.tsx `throttled`).
+    var isDischarging: Bool { reachable && (status?.batteryW ?? 0) < -0.5 }
 
     // BattCal is DELIBERATELY draining: the server-reported adapterCut (ioreg
     // ExternalConnected=No while a charger is physically present) is the ground truth,
@@ -303,12 +350,29 @@ final class BattCalModel: ObservableObject {
     // breakUntil epoch (the next window start) but is Normal charging, NOT a benchmark break.
     var isSchedulePaused: Bool { status?.paused == true && status?.pausedBy == "schedule" }
 
+    // Genius Bar prep is running (dashboard-started): the server holds calibration mode until
+    // the visit. The popover badges it so a "Calibration" selector row is never a mystery.
+    var prepActive: Bool { status?.prep?.active == true }
+
+    // macOS's own battery Condition when it is anything other than the healthy default
+    // ("Service Recommended" etc.) - the string Apple's diagnostics key on. nil = no news.
+    var serviceCondition: String? {
+        guard let c = status?.condition, !c.isEmpty, c != "Normal" else { return nil }
+        return c
+    }
+
     // "Mon 8:00"-style text for when scheduled cycling resumes (time only if that is today).
+    // Formatters are cached: DateFormatter construction is expensive for a per-render call.
+    private static let resumeTimeFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "H:mm"; return f
+    }()
+    private static let resumeDayTimeFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE H:mm"; return f
+    }()
     var scheduleResumeText: String? {
         guard isSchedulePaused, let until = status?.breakUntil else { return nil }
         let date = Date(timeIntervalSince1970: TimeInterval(until))
-        let f = DateFormatter()
-        f.dateFormat = Calendar.current.isDateInToday(date) ? "H:mm" : "EEE H:mm"
+        let f = Calendar.current.isDateInToday(date) ? Self.resumeTimeFmt : Self.resumeDayTimeFmt
         return f.string(from: date)
     }
 
@@ -330,6 +394,8 @@ final class BattCalModel: ObservableObject {
 
     // Write the work schedule (or disable it with nil). The server owns ~/.battcal/schedule,
     // so dashboard and menu bar always agree; status.schedule reflects it on the next poll.
+    // A rejected write (400/403 or no response) surfaces via lastActionError instead of
+    // silently leaving the pane's controls out of sync with the server.
     func setSchedule(days: [Int]?, start: String?, end: String?, enabled: Bool) {
         Task {
             var req = Self.controlRequest(base.appendingPathComponent("api/schedule"))
@@ -338,7 +404,13 @@ final class BattCalModel: ObservableObject {
                 ? ["enabled": true, "days": days ?? [], "start": start ?? "", "end": end ?? ""]
                 : ["enabled": false]
             req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-            _ = try? await URLSession.shared.data(for: req)
+            if let (_, resp) = try? await URLSession.shared.data(for: req),
+               (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true {
+                lastActionError = nil
+            } else {
+                lastActionError = "Schedule not saved - is the BattCal server running?"
+                BattLog.model.error("schedule write rejected")
+            }
             refresh()
         }
     }
@@ -366,6 +438,14 @@ final class BattCalModel: ObservableObject {
             }
             switch target {
             case .longevity, .calibration:
+                // An active Genius Bar prep pins the server to calibration via the prep file, so
+                // clear it FIRST (DELETE restores prevMode + removes the file) or a mode switch
+                // here would leave prep-on-disk + a different mode - a desync only the dashboard's
+                // Stop-prep button could untangle. The mode POST below then sets the real choice.
+                if prepActive {
+                    let del = Self.controlRequest(base.appendingPathComponent("api/prep"), method: "DELETE")
+                    _ = try? await URLSession.shared.data(for: del)
+                }
                 // Mode FIRST, then resume: if a poll lands between the two POSTs it reads
                 // "paused in the new mode" (harmless) instead of "resumed in the OLD mode",
                 // which would briefly start a cycle under the band the user just left.
@@ -379,6 +459,7 @@ final class BattCalModel: ObservableObject {
             case .off:
                 break
             }
+            forceEngineCheck = true   // a select can bootstrap the agent; re-probe immediately
             refresh()
         }
     }
@@ -399,20 +480,25 @@ final class BattCalModel: ObservableObject {
         return p.terminationStatus
     }
 
+    // SF battery glyph for a charge level, shared by the popover header and the stats grid
+    // (an "On battery" tile at 70% must not draw a quarter-full battery).
+    static func batteryGlyph(for pct: Int) -> String {
+        switch pct {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default:    return "battery.100percent"
+        }
+    }
+
     // Popover header battery glyph: battery level + state overlays. (Fine to look like a
     // battery here; it sits next to the big % inside the popover.)
     var symbolName: String {
         guard reachable, let s = status, let pct = s.pct else { return "battery.slash" }
         // Battery glyph for the current level; used for the engine-off state and as the flat fallback,
         // so an engine-off Mac at a low % never draws a FULL battery next to its real percentage.
-        let levelGlyph: String
-        switch pct {
-        case ..<13: levelGlyph = "battery.0percent"
-        case ..<38: levelGlyph = "battery.25percent"
-        case ..<63: levelGlyph = "battery.50percent"
-        case ..<88: levelGlyph = "battery.75percent"
-        default:    levelGlyph = "battery.100percent"
-        }
+        let levelGlyph = Self.batteryGlyph(for: pct)
         if !engineLoaded { return levelGlyph }
         // Paused (Normal charging, no break running) always reads paused - even while macOS
         // trickle-charges or the battery briefly supplements a maxed adapter under load. The

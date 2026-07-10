@@ -20,9 +20,9 @@ struct VisualEffectView: NSViewRepresentable {
     }
 }
 
-// Reusable pieces shared by the menu-bar popover (PopoverView) and the standalone
-// window (MainWindowView). The window adopts Liquid Glass (macOS 26+) with a material
-// fallback on older systems, so call sites stay clean and OSS-safe.
+// Reusable pieces shared by the menu-bar popover (PopoverView) and the standalone window
+// (AppDelegate.showMainWindow hosts the same PopoverView). Surfaces adopt Liquid Glass
+// (macOS 26+) with a material fallback on older systems, so call sites stay clean and OSS-safe.
 
 extension View {
     // Liquid Glass surface with a material fallback. Apply AFTER layout/appearance modifiers.

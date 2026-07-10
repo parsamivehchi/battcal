@@ -37,16 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // One-time migration that set the default menu bar style to Live (Watts + time). Only moved
-        // the old dynamic defaults (eta/power/unset); an explicit percent/health/icon choice is preserved.
+        // One-time UserDefaults migrations (each guarded, each runs at most once).
         let defaults = UserDefaults.standard
-        if !defaults.bool(forKey: "didMigrateLiveV1") {
-            let cur = defaults.string(forKey: "menuLabelStyle")
-            if cur == nil || cur == "eta" || cur == "power" { defaults.set("live", forKey: "menuLabelStyle") }
-            defaults.set(true, forKey: "didMigrateLiveV1")
-        }
-        // V2: the menu bar now defaults to the cool icon-only glyph (no redundant %). Flip anyone still
-        // on a dynamic / percent / live default to iconOnly once; an explicit health / iconOnly pick stays.
+        // Menu bar style default became the icon-only glyph (no redundant %). Flip anyone still on
+        // a dynamic / percent / live default once; an explicit health / iconOnly pick stays. This
+        // supersedes the retired V1 (live-default) migration, so V1's key is no longer consulted.
         if !defaults.bool(forKey: "didMigrateIconV2") {
             let cur = defaults.string(forKey: "menuLabelStyle")
             if cur == nil || cur == "live" || cur == "eta" || cur == "power" || cur == "percent" {
@@ -54,12 +49,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             defaults.set(true, forKey: "didMigrateIconV2")
         }
+        // Home networks moved from a comma-joined string to a string array (an SSID may contain
+        // a comma). "New key absent + legacy present" makes this inherently one-time.
+        if defaults.stringArray(forKey: "homeSSIDList") == nil,
+           let legacy = defaults.string(forKey: "homeSSIDs"), !legacy.isEmpty {
+            let list = legacy.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            defaults.set(list, forKey: "homeSSIDList")
+        }
         // Proper app: Dock icon + cmd-tab, in addition to the menu bar item.
         NSApp.setActivationPolicy(.regular)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
             button.imagePosition = .imageLeading
             button.target = self
             button.action = #selector(handleClick)
@@ -69,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self   // tracks chart visibility so background polls skip telemetry
         popover.contentViewController = NSHostingController(
             rootView: PopoverView(model: model, wifi: wifi,
                                   onPopOut: { [weak self] in self?.showMainWindow() },
@@ -175,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             w.isOpaque = false
             w.backgroundColor = .clear
             w.isReleasedWhenClosed = false
+            w.delegate = self   // windowWillClose drops chartVisible when this closes
             hosting.view.layoutSubtreeIfNeeded()
             w.setContentSize(hosting.view.fittingSize)   // fit the popover exactly, no dead space
             positionNearStatusItem(w)
@@ -183,6 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Reopening from closed: re-anchor near the click, which may be on a different screen.
             positionNearStatusItem(w)
         }
+        model.chartVisible = true
+        model.refresh()   // fetch telemetry for the chart right away, not at the next 15 s tick
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
     }
@@ -251,5 +257,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
             popover.contentViewController?.view.window?.makeKey()
         }
+    }
+}
+
+// Chart-visibility tracking: telemetry only feeds the popover/window chart, so the model
+// skips that fetch entirely while neither surface is on screen (see BattCalModel.refresh).
+extension AppDelegate: NSPopoverDelegate {
+    func popoverDidShow(_ notification: Notification) {
+        model.chartVisible = true
+        model.refresh()   // fresh telemetry now, not at the next 15 s tick
+    }
+    func popoverDidClose(_ notification: Notification) {
+        // The main window may still be showing the same chart (pop-out closes the popover first).
+        if mainWindow?.isVisible != true { model.chartVisible = false }
+    }
+}
+
+extension AppDelegate: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === mainWindow else { return }
+        if !popover.isShown { model.chartVisible = false }
     }
 }

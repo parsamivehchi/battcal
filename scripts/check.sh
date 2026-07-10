@@ -23,7 +23,19 @@ else
   fail "dashboard/node_modules missing (cd dashboard && npm install)"
 fi
 
-# (d) read-only live smoke: /api/status must carry the core fields. GET only, no POSTs.
+# (d) Swift syntax gate for the menu bar app. -parse is syntax-only (fast, no SDK link);
+# full type checking still happens in deploy.sh's xcodebuild. Skips when Xcode tools are absent.
+if xcrun --find swiftc >/dev/null 2>&1; then
+  if xcrun swiftc -parse "$REPO"/menubar/BattCalBar/*.swift >/dev/null 2>&1; then
+    pass "swiftc -parse menubar/BattCalBar"
+  else
+    fail "swiftc -parse menubar/BattCalBar"
+  fi
+else
+  pass "swiftc not found - skipping Swift syntax gate"
+fi
+
+# (e) read-only live smoke: /api/status must carry the core fields. GET only, no POSTs.
 PORT="${BATTCAL_DASH_PORT:-4437}"
 j=$(curl -s --max-time 4 "http://localhost:$PORT/api/status" 2>/dev/null || true)
 if [ -n "$j" ]; then

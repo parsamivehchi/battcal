@@ -206,6 +206,7 @@ private struct StatusBadge: View {
 private struct GeneralPane: View {
     @AppStorage("menuLabelStyle") private var labelStyleRaw = LabelStyle.iconOnly.rawValue
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var loginError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -236,8 +237,18 @@ private struct GeneralPane: View {
                                 do {
                                     if on { try SMAppService.mainApp.register() }
                                     else { try SMAppService.mainApp.unregister() }
-                                } catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
+                                    loginError = nil
+                                } catch {
+                                    // Snap the switch back to reality and say why, instead of
+                                    // silently pretending the toggle took.
+                                    launchAtLogin = SMAppService.mainApp.status == .enabled
+                                    loginError = "Could not update the login item: \(error.localizedDescription)"
+                                    BattLog.ui.error("login item change failed: \(error.localizedDescription, privacy: .public)")
+                                }
                             }
+                    }
+                    if let loginError {
+                        Text(loginError).font(.system(size: 11.5)).foregroundStyle(.orange)
                     }
                 }
             }
@@ -251,14 +262,16 @@ private struct GeneralPane: View {
 private struct HomeCyclingPane: View {
     @ObservedObject var wifi: WiFiMonitor
     @AppStorage("homeGateEnabled") private var gateEnabled = true
-    @AppStorage("homeSSIDs") private var homeSSIDsRaw = WiFiMonitor.defaultHomeSSIDs
     @State private var newSSID = ""
+    // Local mirror of the stored list ("homeSSIDList" string array; comma-safe, unlike the
+    // legacy comma-joined string). Seeded from WiFiMonitor (which owns the read + legacy
+    // fallback) and written back through commit().
+    @State private var ssidList: [String] = []
 
-    private var ssids: [String] {
-        homeSSIDsRaw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-    }
+    private var ssids: [String] { ssidList }
     private func commit(_ list: [String]) {
-        homeSSIDsRaw = list.joined(separator: ",")
+        ssidList = list
+        UserDefaults.standard.set(list, forKey: "homeSSIDList")
         wifi.configChanged()
     }
     private func add(_ raw: String) {
@@ -372,6 +385,7 @@ private struct HomeCyclingPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.blue.opacity(0.07)))
         }
+        .onAppear { ssidList = wifi.homeSSIDs }
     }
 
     private var statusSymbol: String {
@@ -409,7 +423,6 @@ private struct WorkSchedulePane: View {
     @State private var end = WorkSchedulePane.time(18, 0)
     @State private var seeded = false
 
-    private static let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     private static func time(_ h: Int, _ m: Int) -> Date {
         Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date()
     }
@@ -443,7 +456,7 @@ private struct WorkSchedulePane: View {
                     HStack(spacing: 6) {
                         ForEach(1...7, id: \.self) { d in
                             let on = days.contains(d)
-                            Button(Self.dayNames[d - 1]) {
+                            Button(BattFormat.weekdayAbbrev[d - 1]) {
                                 if on { days.remove(d) } else { days.insert(d) }
                                 commit()
                             }
@@ -487,6 +500,16 @@ private struct WorkSchedulePane: View {
             }
             .disabled(!enabled)
             .opacity(enabled ? 1 : 0.5)
+
+            // A rejected /api/schedule write (server down, bad payload) is otherwise invisible:
+            // the controls would sit here looking saved while the server still has the old config.
+            if let err = model.lastActionError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                    Text(err).font(.system(size: 11.5)).foregroundStyle(.orange)
+                }
+            }
 
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: "info.circle.fill")
