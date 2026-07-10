@@ -78,6 +78,60 @@
       "regex": "^/_not\\-found(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/api/cycles",
+      "regex": "^/api/cycles(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cycles(?:/)?$"
+    },
+    {
+      "page": "/api/evidence",
+      "regex": "^/api/evidence(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/evidence(?:/)?$"
+    },
+    {
+      "page": "/api/log",
+      "regex": "^/api/log(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/log(?:/)?$"
+    },
+    {
+      "page": "/api/status",
+      "regex": "^/api/status(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/status(?:/)?$"
+    },
+    {
+      "page": "/api/telemetry",
+      "regex": "^/api/telemetry(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/telemetry(?:/)?$"
+    },
+    {
+      "page": "/auth/callback",
+      "regex": "^/auth/callback(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/auth/callback(?:/)?$"
+    },
+    {
+      "page": "/auth/signout",
+      "regex": "^/auth/signout(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/auth/signout(?:/)?$"
+    },
+    {
+      "page": "/auth/start",
+      "regex": "^/auth/start(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/auth/start(?:/)?$"
+    },
+    {
+      "page": "/login",
+      "regex": "^/login(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/login(?:/)?$"
     }
   ],
   "dataRoutes": [],

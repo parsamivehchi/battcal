@@ -1,5 +1,14 @@
 {
   "/[[...slug]]/page": "app/[[...slug]]/page.js",
   "/_global-error/page": "app/_global-error/page.js",
-  "/_not-found/page": "app/_not-found/page.js"
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/cycles/route": "app/api/cycles/route.js",
+  "/api/evidence/route": "app/api/evidence/route.js",
+  "/api/log/route": "app/api/log/route.js",
+  "/api/status/route": "app/api/status/route.js",
+  "/api/telemetry/route": "app/api/telemetry/route.js",
+  "/auth/callback/route": "app/auth/callback/route.js",
+  "/auth/signout/route": "app/auth/signout/route.js",
+  "/auth/start/route": "app/auth/start/route.js",
+  "/login/page": "app/login/page.js"
 }

@@ -456,6 +456,100 @@ const json = (res, code, body) => {
 // (e.g. Number('abc')) from silently disabling a downstream filter and returning the whole file.
 const numParam = (v, def, max) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : def; };
 
+// ---- Cloud sync (optional, outbound-only) --------------------------------------------------
+// Pushes read-only snapshots to Supabase so the hosted mirror (mivehchi.dev/battcal) can render
+// them. Gated on ~/.battcal/cloud.json ({ "url": "https://<ref>.supabase.co", "serviceRoleKey":
+// "..." }); absent = every tick is a no-op, so OSS installs and the local flow are unaffected.
+// STRICTLY outbound (the server keeps its 127.0.0.1 bind; nothing inbound is added) and every
+// push is caught: an upload failure can never touch charging state or the local API.
+const CLOUD_CONFIG = join(HOME, '.battcal', 'cloud.json');
+const CLOUD_CURSOR = join(HOME, '.battcal', 'cloud-cursor');
+function cloudConfig() {
+  try {
+    const c = JSON.parse(readFileSync(CLOUD_CONFIG, 'utf8'));
+    return c && c.url && c.serviceRoleKey ? c : null;
+  } catch { return null; }
+}
+async function cloudWrite(cfg, pathq, body) {
+  const res = await fetch(`${cfg.url}/rest/v1/${pathq}`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.serviceRoleKey,
+      authorization: `Bearer ${cfg.serviceRoleKey}`,
+      'content-type': 'application/json',
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${pathq.split('?')[0]}: HTTP ${res.status}`);
+}
+const cloudDoc = (cfg, table, payload) =>
+  cloudWrite(cfg, `${table}?on_conflict=id`, { id: 1, payload, updated_at: new Date().toISOString() });
+
+// Throttled error reporting: one line per 10 minutes, not one per failed tick.
+let cloudErrAt = 0;
+function cloudErr(e) {
+  if (Date.now() - cloudErrAt < 600e3) return;
+  cloudErrAt = Date.now();
+  console.error(`cloud sync: ${String(e?.message || e)}`);
+}
+
+// Incremental telemetry: push rows newer than the cursor (the last pushed ts), 500 per tick.
+async function pushTelemetry(cfg) {
+  let cursor = '';
+  try { cursor = readFileSync(CLOUD_CURSOR, 'utf8').trim(); } catch {}
+  const rows = readCsv(TELEMETRY).filter((r) => r.ts && (!cursor || r.ts > cursor)).slice(0, 500);
+  if (!rows.length) return;
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  await cloudWrite(cfg, 'battcal_telemetry?on_conflict=ts', rows.map((r) => ({
+    ts: r.ts,
+    state: r.state ?? null,
+    pct: num(r.pct),
+    charging: r.charging ?? null,
+    raw_current_mah: num(r.raw_current_mAh),
+    raw_max_mah: num(r.raw_max_mAh),
+    voltage_mv: num(r.voltage_mV),
+    amperage_ma: num(r.amperage_mA),
+    battery_w: num(r.battery_W),
+    adapter_w: num(r.adapter_W),
+    temp_c: num(r.temp_C),
+  })));
+  writeFileSync(CLOUD_CURSOR, rows[rows.length - 1].ts);
+}
+
+let cloudLastPurge = 0;
+async function purgeOldTelemetry(cfg) {
+  if (Date.now() - cloudLastPurge < 24 * 3600e3) return;
+  cloudLastPurge = Date.now();
+  const cutoff = new Date(Date.now() - 30 * 86400e3).toISOString();
+  await fetch(`${cfg.url}/rest/v1/battcal_telemetry?ts=lt.${encodeURIComponent(cutoff)}`, {
+    method: 'DELETE',
+    headers: { apikey: cfg.serviceRoleKey, authorization: `Bearer ${cfg.serviceRoleKey}` },
+  });
+}
+
+// Cadences: status 30 s; telemetry every 60 s; cycles/log/evidence (+ daily purge) every 5 min.
+setInterval(async () => {
+  const cfg = cloudConfig();
+  if (!cfg) return;
+  try { await cloudDoc(cfg, 'battcal_status', status()); } catch (e) { cloudErr(e); }
+}, 30e3);
+setInterval(async () => {
+  const cfg = cloudConfig();
+  if (!cfg) return;
+  try { await pushTelemetry(cfg); } catch (e) { cloudErr(e); }
+}, 60e3);
+setInterval(async () => {
+  const cfg = cloudConfig();
+  if (!cfg) return;
+  try {
+    await cloudDoc(cfg, 'battcal_cycles', readCsv(ns().cycles));
+    await cloudDoc(cfg, 'battcal_log', logTail(200));
+    await cloudDoc(cfg, 'battcal_evidence', evidence());
+    await purgeOldTelemetry(cfg);
+  } catch (e) { cloudErr(e); }
+}, 300e3);
+
 createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;

@@ -1,5 +1,14 @@
 {
   "/[[...slug]]/page": "/[[...slug]]",
   "/_global-error/page": "/_global-error",
-  "/_not-found/page": "/_not-found"
+  "/_not-found/page": "/_not-found",
+  "/api/cycles/route": "/api/cycles",
+  "/api/evidence/route": "/api/evidence",
+  "/api/log/route": "/api/log",
+  "/api/status/route": "/api/status",
+  "/api/telemetry/route": "/api/telemetry",
+  "/auth/callback/route": "/auth/callback",
+  "/auth/signout/route": "/auth/signout",
+  "/auth/start/route": "/auth/start",
+  "/login/page": "/login"
 }

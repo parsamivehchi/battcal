@@ -1,7 +1,8 @@
 {
   "app": {
     "[project]/cloud/app/[[...slug]]/page": [],
-    "[project]/cloud/app/_not-found/page": []
+    "[project]/cloud/app/_not-found/page": [],
+    "[project]/cloud/app/login/page": []
   },
   "appUsingSizeAdjust": true,
   "pages": {},

@@ -1,1 +1,1 @@
-self.__NEXT_FONT_MANIFEST="{\n  \"app\": {\n    \"[project]/cloud/app/[[...slug]]/page\": [],\n    \"[project]/cloud/app/_not-found/page\": []\n  },\n  \"appUsingSizeAdjust\": true,\n  \"pages\": {},\n  \"pagesUsingSizeAdjust\": false\n}"
+self.__NEXT_FONT_MANIFEST="{\n  \"app\": {\n    \"[project]/cloud/app/[[...slug]]/page\": [],\n    \"[project]/cloud/app/_not-found/page\": [],\n    \"[project]/cloud/app/login/page\": []\n  },\n  \"appUsingSizeAdjust\": true,\n  \"pages\": {},\n  \"pagesUsingSizeAdjust\": false\n}"
