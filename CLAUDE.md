@@ -64,11 +64,18 @@ truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
   mode 600, NEVER committed): status 30 s, telemetry 60 s incremental (cursor file
   `~/.battcal/cloud-cursor`), cycles/log/evidence 5 min, 30 d telemetry purge.
   Absent config = no-op, so OSS installs are unaffected.
-- The mirror is READ-ONLY by construction: `cloudDataSource` has no control methods
-  AND `cloud/` ships no control routes. Controls exist only on the Mac
-  (battcal.localhost + menu bar). All personal values in `cloud/` are env-driven
-  (`cloud/.env.example`); the auth kit follows the netstats basePath deviations
-  (relative Locations, explicit "/" proxy matcher, /battcal redirect URI).
+- The mirror has NO direct controls: `cloudDataSource` has no control methods and
+  `cloud/` ships no control routes. Direct controls exist only on the Mac
+  (battcal.localhost + menu bar). The one write surface is the remote command QUEUE:
+  `POST /battcal/api/command` (owner-gated) inserts a whitelisted intent row into
+  `battcal_commands` (hub migration 0023); server.mjs polls every 30 s, claims each
+  pending row via compare-and-set, RE-VALIDATES against its own whitelist (pause /
+  resume / mode / break 1-240m; rows older than 10 min expire), executes through the
+  same primitives as the local POST routes, settles the row (done/rejected/expired),
+  and pushes a fresh status doc. The Mac stays the sole authority; never add a cloud
+  route that mutates anything but that table. All personal values in `cloud/` are
+  env-driven (`cloud/.env.example`); the auth kit follows the netstats basePath
+  deviations (relative Locations, explicit "/" proxy matcher, /battcal redirect URI).
 
 ## Hard-won constraints (do not regress)
 

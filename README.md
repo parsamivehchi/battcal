@@ -23,6 +23,10 @@ stays plugged in, so both the gauge and macOS re-learn the battery's true capaci
 
 ## What it looks like
 
+![BattCal dashboard - Overview](docs/dashboard-overview.png)
+
+![BattCal dashboard - Health](docs/dashboard-health.png)
+
 ```
 menu bar (icon-only by default, so it stays clean):
    [band glyph]    idle / holding - a battery-block mark, no redundant %
