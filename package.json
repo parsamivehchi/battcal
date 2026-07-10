@@ -2,9 +2,10 @@
   "name": "battcal",
   "private": true,
   "version": "0.1.0",
-  "description": "Battery band cycler - npm workspace root (dashboard SPA + cloud mirror). The engine/server/menubar surfaces are not npm packages.",
+  "description": "Battery band cycler - npm workspace root (dashboard SPA + cloud mirror + public site). The engine/server/menubar surfaces are not npm packages.",
   "workspaces": [
     "dashboard",
-    "cloud"
+    "cloud",
+    "site"
   ]
 }

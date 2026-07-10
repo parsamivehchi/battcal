@@ -1,0 +1,119 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/dm-sans';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+/* Instrument-panel light theme derived from the product: charge green, MagSafe amber,
+   parked-zone red. Every var also defined for dark (media query) - vars must exist in
+   ALL themes and call sites use fallbacks. */
+:root {
+  --paper: #fbfbf9;
+  --paper-2: #f2f4ef;
+  --ink: #17201b;
+  --ink-2: #48544d;
+  --ink-3: #7c877f;
+  --line: #e2e6df;
+  --green: #179161;
+  --green-deep: #0d6b46;
+  --green-tint: #e5f3ec;
+  --amber: #d98f2b;
+  --amber-tint: #faf0dd;
+  --red: #c4463d;
+  --card: #ffffff;
+  --code-bg: #10231b;
+  --code-tx: #d7e8de;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #101613;
+    --paper-2: #16201b;
+    --ink: #e8eee9;
+    --ink-2: #a7b3ab;
+    --ink-3: #6d7972;
+    --line: #263129;
+    --green: #2fb37e;
+    --green-deep: #4ecf99;
+    --green-tint: #16281f;
+    --amber: #e8a852;
+    --amber-tint: #2a2214;
+    --red: #e06a61;
+    --card: #17211c;
+    --code-bg: #0b1210;
+    --code-tx: #cfe0d6;
+  }
+}
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+body {
+  background: var(--paper, #fbfbf9);
+  color: var(--ink, #17201b);
+  font-family: 'DM Sans Variable', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+.display {
+  font-weight: 860;
+  letter-spacing: -0.028em;
+  line-height: 1.02;
+}
+
+/* Telemetry eyebrow: the engine-log register */
+.eyebrow {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--green, #179161);
+}
+
+.card {
+  background: var(--card, #ffffff);
+  border: 1px solid var(--line, #e2e6df);
+  border-radius: 14px;
+}
+
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--green-deep, #0d6b46); color: #fff;
+  border-radius: 10px; padding: 12px 20px;
+  font-weight: 700; font-size: 15px;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 18px color-mix(in srgb, var(--green-deep, #0d6b46) 30%, transparent); }
+.btn-secondary {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line, #e2e6df); color: var(--ink, #17201b);
+  background: var(--card, #fff);
+  border-radius: 10px; padding: 12px 20px; font-weight: 600; font-size: 15px;
+}
+.btn-secondary:hover { border-color: var(--ink-3, #7c877f); }
+
+:focus-visible { outline: 2px solid var(--green, #179161); outline-offset: 2px; }
+
+.terminal {
+  background: var(--code-bg, #10231b);
+  color: var(--code-tx, #d7e8de);
+  border-radius: 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+/* Hatched forbidden zone for the band gauge */
+.hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--red, #c4463d) 32%, transparent) 0 3px,
+    transparent 3px 8px
+  );
+}

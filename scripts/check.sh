@@ -31,6 +31,15 @@ else
   pass "cloud deps/types not present - skipping cloud typecheck"
 fi
 
+# (c3) public site typecheck (mivehchi.app/battcal landing; same posture as c2).
+if [ -d "$REPO/site" ]; then
+  if [ -d "$REPO/node_modules/vite" ]; then
+    if (cd "$REPO/site" && npx tsc --noEmit >/dev/null 2>&1); then pass "tsc --noEmit site"; else fail "tsc --noEmit site"; fi
+  else
+    pass "site deps not present - skipping site typecheck"
+  fi
+fi
+
 # (d) Swift syntax gate for the menu bar app. -parse is syntax-only (fast, no SDK link);
 # full type checking still happens in deploy.sh's xcodebuild. Skips when Xcode tools are absent.
 if xcrun --find swiftc >/dev/null 2>&1; then

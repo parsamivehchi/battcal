@@ -250,7 +250,10 @@ edit that file, not the deployed copy.
 
 ## Credits and license
 
-- Engine, installer, and SwiftBar plugin: MIT (c) 2026 Parsa Mivehchi.
+- BattCal is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE)
+  (c) 2026 Parsa Mivehchi: free for personal and other noncommercial use. Commercial
+  use requires a license - see [COMMERCIAL.md](COMMERCIAL.md). Releases up to and
+  including v1.3.0 remain MIT.
 - Charging control by [batt](https://github.com/charlie0129/batt) (GPL-2.0), invoked as
   an external binary; it is installed via Homebrew, not bundled here.
 - Menu bar rendering by [SwiftBar](https://github.com/swiftbar/SwiftBar) (MIT), optional.

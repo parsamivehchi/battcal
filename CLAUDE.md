@@ -5,7 +5,9 @@ Battery band cycler for Apple Silicon MacBooks. Cycles the battery inside a band
 cells never park at 100%. Ships an engine (bash LaunchAgent), a zero-dependency
 Node dashboard server + Vite/React dashboard, a native SwiftUI menu bar app, a
 SwiftBar plugin alternative, and an optional hosted read-only mirror (Next.js +
-Supabase, deployed behind SSO). Public repo (MIT): https://github.com/parsamivehchi/battcal
+Supabase, deployed behind SSO), and a public product page (`site/`, mivehchi.app/battcal).
+Public repo (PolyForm Noncommercial 1.0.0 since v1.3.0; earlier releases MIT):
+https://github.com/parsamivehchi/battcal
 
 ## Layout
 
@@ -18,6 +20,7 @@ both web builds; the engine/server/menubar are not npm packages.
 | `server/server.mjs` | Zero-dep Node server: JSON API + serves `dashboard/dist` (port 4437) + optional cloud push |
 | `dashboard/` | Vite 7 + React 19 + Recharts SPA. `src/kit/` = vendored platform design system (5 themes, AppShell, primitives, chart config); `src/views/` = routed views (overview/health/genius-bar/activity/settings); `src/data/` = injected DataSource (live local vs read-only cloud) |
 | `cloud/` | Hosted mirror: Next 16, basePath `/battcal`, prsa.me OIDC gate, Supabase-backed read routes; mounts the SAME `dashboard/src/App` client-only |
+| `site/` | PUBLIC product page (mivehchi.app/battcal): Vite + React + Tailwind v4, base `/battcal/`, own Vercel project `battcal-site`; `api/contact.ts` = bot-gated Resend contact (the only server surface) |
 | `menubar/` | BattCalBar: SwiftUI MenuBarExtra app, XcodeGen project, icon generator script |
 | `swiftbar/` | Lightweight SwiftBar plugin alternative to the native app |
 | `install.sh` / `uninstall.sh` | Installer (installs PAUSED) / clean removal |
