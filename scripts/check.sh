@@ -23,6 +23,14 @@ else
   fail "dashboard/node_modules missing (cd dashboard && npm install)"
 fi
 
+# (c2) cloud mirror typecheck (skipped when its deps are absent; the Vercel build is the
+# authoritative gate for the hosted app, this catches type breaks before push).
+if [ -d "$REPO/node_modules/next" ] && [ -f "$REPO/cloud/next-env.d.ts" ]; then
+  if (cd "$REPO/cloud" && npx tsc --noEmit >/dev/null 2>&1); then pass "tsc --noEmit cloud"; else fail "tsc --noEmit cloud"; fi
+else
+  pass "cloud deps/types not present - skipping cloud typecheck"
+fi
+
 # (d) Swift syntax gate for the menu bar app. -parse is syntax-only (fast, no SDK link);
 # full type checking still happens in deploy.sh's xcodebuild. Skips when Xcode tools are absent.
 if xcrun --find swiftc >/dev/null 2>&1; then
