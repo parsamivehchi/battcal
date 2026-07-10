@@ -186,7 +186,7 @@ export default function App() {
       {/* Install */}
       <Section id="install" eyebrow="install" title="Two ways in">
         <div className="grid gap-6 lg:grid-cols-2">
-          <div className="card p-6">
+          <div className="card min-w-0 p-6">
             <h3 className="font-bold">Just the menu bar app</h3>
             <p className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--ink-2, #48544d)' }}>
               Download the zip from the <a className="underline" style={{ color: 'var(--green-deep, #0d6b46)' }} href={RELEASES}>latest release</a>, move
@@ -195,7 +195,7 @@ export default function App() {
             </p>
             <pre className="terminal mt-4 p-4"><code>xattr -dr com.apple.quarantine /Applications/BattCalBar.app</code></pre>
           </div>
-          <div className="card p-6">
+          <div className="card min-w-0 p-6">
             <h3 className="font-bold">The full engine + dashboard</h3>
             <p className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--ink-2, #48544d)' }}>
               Clone the repo and run the installer. It sets up the cycling engine and dashboard,
