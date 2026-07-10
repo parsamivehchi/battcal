@@ -14,3 +14,4 @@ cloud/.vercel/
 .env*
 !.env.example
 progress/
+site/dist/
