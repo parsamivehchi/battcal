@@ -12,7 +12,6 @@
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@vercel/analytics": "^1.5.0",
-    "botid": "^1.5.0",
     "lucide-react": "^1.24.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",

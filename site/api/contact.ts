@@ -1,7 +1,6 @@
 // The one server surface on the public site: the commercial-licensing / question form.
 // The destination address lives only here (env), never in the page. Bot layers, in order:
-// honeypot field, minimum-fill-time, per-IP rate limit, Vercel BotID classification.
-// BotID being unavailable degrades to the other layers instead of blocking humans.
+// honeypot field, minimum-fill-time, per-IP rate limit (see the BotID note below).
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Resend } from 'resend';
 
@@ -43,13 +42,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const ip = String(req.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
   if (rateLimited(ip)) return res.status(429).json({ error: 'too many messages, try later' });
 
-  try {
-    const { checkBotId } = await import('botid/server');
-    const verdict = await checkBotId();
-    if (verdict.isBot) return res.status(200).json({ ok: true });
-  } catch {
-    // BotID unavailable (local dev, proxy edge cases): the layers above still apply.
-  }
+  // NOTE: no BotID here on purpose. Its client cannot run through the mivehchi.app
+  // proxy (beacon paths missing), and server-side checkBotId() without the client
+  // classifies every request as a bot and silently swallowed real submissions
+  // (verified live 2026-07-10). Honeypot + fill-time + rate limit are the defense;
+  // upgrade path is Cloudflare Turnstile, which verifies by token, not beacon.
 
   if (!name || !email || message.length < 20) {
     return res.status(400).json({ error: 'name, email, and a message of at least 20 characters are required' });
