@@ -1,0 +1,9 @@
+{
+  "app": {
+    "[project]/cloud/app/[[...slug]]/page": [],
+    "[project]/cloud/app/_not-found/page": []
+  },
+  "appUsingSizeAdjust": true,
+  "pages": {},
+  "pagesUsingSizeAdjust": false
+}

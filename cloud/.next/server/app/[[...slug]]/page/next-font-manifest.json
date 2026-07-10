@@ -1,0 +1,8 @@
+{
+  "pages": {},
+  "app": {
+    "[project]/cloud/app/[[...slug]]/page": []
+  },
+  "appUsingSizeAdjust": true,
+  "pagesUsingSizeAdjust": false
+}

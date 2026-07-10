@@ -12,10 +12,10 @@
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "lucide-react": "^1.24.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "react-router-dom": "^7.18.1",
-    "recharts": "^3.2.0"
+    "recharts": "^3.9.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
