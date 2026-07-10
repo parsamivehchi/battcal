@@ -1,3 +1,5 @@
+// Shared API types (the exact wire contract of the local server AND the cloud
+// mirror; the Supabase columns are named after TelemetryRow/CycleRow on purpose).
 export type Mode = 'longevity' | 'calibration';
 
 export interface Status {
@@ -24,8 +26,8 @@ export interface Status {
   designCycles: number;
   appleHealth: string | number | null;
   condition: string | null;
-  namespace: string;           // the install controls target (personal 'battery-calibrate' vs OSS 'battcal')
-  namespaceConflict: boolean;  // both installs' state files exist; controls silently target the first (personal)
+  namespace: string;           // the install controls target (personal vs OSS namespace)
+  namespaceConflict: boolean;  // both installs' state files exist; controls silently target the first
   prep: { active: boolean; startedAt: number | null } | null;
   pausedBy?: 'schedule' | 'user' | null;  // 'schedule' = the engine's off-hours pause; undefined on older servers
   schedule?: Schedule;         // work-schedule config + whether now is inside the window
@@ -81,33 +83,11 @@ export interface Evidence {
   generatedAt: string;
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
-  return res.json() as Promise<T>;
+// A telemetry point on the shared time axis (engine rows and the live status
+// ring buffer both normalize to this).
+export interface Pt { t: number; pct: number; w: number; temp: number | null; state: string }
+
+export interface HealthPt {
+  t: number; cycle: number; mode: string;
+  raw: number | null; nominal: number | null; apple: number | null;
 }
-
-export const fetchStatus = () => get<Status>('/api/status');
-export const fetchTelemetry = (hours: number) => get<TelemetryRow[]>(`/api/telemetry?hours=${hours}`);
-export const fetchCycles = () => get<CycleRow[]>('/api/cycles');
-export const fetchLog = (lines = 120) => get<string[]>(`/api/log?lines=${lines}`);
-// Every state-changing call carries the x-battcal header the server requires (CSRF guard);
-// requests without it are rejected with 403.
-const send = (path: string, method: 'POST' | 'DELETE') =>
-  fetch(path, { method, headers: { 'x-battcal': '1' } });
-
-export const postPause = () => send('/api/pause', 'POST');
-export const postResume = () => send('/api/resume', 'POST');
-export const postBreak = (minutes: number) => send(`/api/break?minutes=${minutes}`, 'POST');
-export const postMode = (mode: Mode) => send(`/api/mode?mode=${mode}`, 'POST');
-export const fetchEvidence = () => get<Evidence>('/api/evidence');
-export const postPrep = () => send('/api/prep', 'POST');
-export const endPrep = () => send('/api/prep', 'DELETE');
-export const fetchSchedule = () => get<Schedule>('/api/schedule');
-// Enable/update: pass days + HHMM start/end. Disable: postSchedule({ enabled: false }).
-export const postSchedule = (s: { enabled: boolean; days?: number[]; start?: string; end?: string }) =>
-  fetch('/api/schedule', {
-    method: 'POST',
-    headers: { 'x-battcal': '1', 'content-type': 'application/json' },
-    body: JSON.stringify(s),
-  });

@@ -1,15 +1,26 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import '@fontsource-variable/dm-sans';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/600.css';
+import './kit/app.css';
 import App from './App';
-import './index.css';
+import { liveDataSource } from './data/data-source';
 
-// Resolve theme before first paint: Auto (default) follows the system appearance.
-const pref = localStorage.getItem('battcal-theme') ?? 'auto';
-const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-document.documentElement.dataset.theme = pref === 'auto' ? (sysDark ? 'dark' : 'light') : pref;
+// Resolve theme before first paint (mirrors kit/ThemeProvider exactly: LIGHT default).
+// Pre-rehaul the stored value could be 'auto'; migrate it once to the system-resolved theme.
+const VALID = ['light', 'dark', 'midnight', 'forest', 'warm'];
+let pref = localStorage.getItem('battcal-theme') ?? 'light';
+if (!VALID.includes(pref)) {
+  pref = pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  localStorage.setItem('battcal-theme', pref);
+}
+document.documentElement.classList.toggle('dark', ['dark', 'midnight', 'forest'].includes(pref));
+if (pref === 'light') document.documentElement.removeAttribute('data-theme');
+else document.documentElement.setAttribute('data-theme', pref);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <App source={liveDataSource()} />
   </StrictMode>,
 );

@@ -1,0 +1,103 @@
+@import 'tailwindcss';
+@import './theme.css';
+
+/* Tailwind sources: the shared SPA plus the cloud app's own chrome (login page etc.).
+   Paths are relative to THIS file, so both the Vite and the Next build scan both trees. */
+@source '../';
+@source '../../../cloud/app';
+
+/* Class-based dark mode (Tailwind v4) - mirrors the aecom platform. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Shared @theme alias block (inlined: Tailwind v4 drops @theme from a plain @import).
+   Vendored from the aecom platform apps. Bridges the runtime tokens in kit/theme.css
+   to Tailwind utility classes (bg-card, text-text, text-accent, border-card-border,
+   bg-form-bg, ...) used by the vendored shell + primitives. */
+@theme {
+  --color-accent: var(--accent, #30d158);
+  --color-accent-dark: var(--accent-dark, #248a3d);
+
+  --color-app-bg: var(--bg);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --color-card-hover: var(--card-hover);
+  --color-text: var(--tx);
+  --color-text-secondary: var(--tx-2);
+  --color-text-muted: var(--tx-3);
+
+  --color-status-success: var(--st-success);
+  --color-status-error: var(--st-error);
+  --color-status-warning: var(--st-warning);
+  --color-status-info: var(--st-info);
+
+  --color-form-bg: var(--form-bg);
+  --color-input-border: var(--input-border);
+
+  --font-sans: 'DM Sans Variable', 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+}
+
+/* Per-app brand accent: battcal green (charge). Brighter in the dark themes so the
+   accent keeps contrast against the near-black cards. */
+:root {
+  --accent: #248a3d;
+  --accent-dark: #1d7033;
+}
+.dark,
+[data-theme='dark'],
+[data-theme='midnight'],
+[data-theme='forest'] {
+  --accent: #30d158;
+  --accent-dark: #28b34c;
+}
+
+/* Legacy-name alias layer: the pre-rehaul battcal charts/styles were built against
+   these var names. They now resolve to the auto-flipping platform tokens, so carried-
+   over chart code follows all 5 themes with no per-component edits. */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='midnight'],
+:root[data-theme='forest'],
+:root[data-theme='warm'] {
+  --page: var(--bg);
+  --surface-1: var(--card);
+  --text-primary: var(--tx);
+  --text-secondary: var(--tx-2);
+  --muted: var(--tx-3);
+  --grid: var(--card-border);
+  --axis: var(--tx-3);
+  --border: var(--card-border);
+  --baseline: var(--tx-3);
+  --accent-wash: color-mix(in srgb, var(--accent) 12%, transparent);
+  --series-1: var(--chart-1);
+  --series-2: var(--chart-2);
+  --series-3: var(--chart-3);
+  --diverge-pos: var(--st-success);
+  --diverge-neg: var(--st-error);
+  --status-good: var(--st-success);
+  --status-warning: var(--st-warning);
+  --status-serious: var(--st-warning);
+  --status-critical: var(--st-error);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--tx);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Print: the Genius Bar evidence report prints from the app. */
+@media print {
+  aside,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+  #bc-main {
+    overflow: visible !important;
+  }
+}

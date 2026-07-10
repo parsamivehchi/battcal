@@ -1,0 +1,121 @@
+/* @aecom/theme - shared runtime tokens + base styles for every platform app.
+   Plain CSS only (NO @theme; Tailwind v4 drops @theme from a plain @import, so the
+   @theme alias block is inlined per app instead - see theme-block.css).
+   Apps @import this file, then override --accent (+ --accent-dark) for their brand. */
+
+/* Light (default). --accent defaults to AECOM green; each app overrides it. */
+:root {
+  --bg: #f8fafc; --card: #ffffff; --card-border: #e2e8f0; --card-hover: #f1f5f9;
+  --tx: #0f172a; --tx-2: #334155; --tx-3: #64748b;
+  --st-success: #059669; --st-error: #dc2626; --st-warning: #d97706; --st-info: #2563eb;
+  --form-bg: #ffffff; --input-border: #cbd5e1;
+  --accent: #00AB61; --accent-dark: #009555;
+  --chart-1: #00AB61; --chart-2: #3b82f6; --chart-3: #f59e0b; --chart-4: #8b5cf6; --chart-5: #ec4899; --chart-6: #14b8a6;
+}
+.dark, [data-theme="dark"] {
+  --bg: #09090b; --card: #18181b; --card-border: #27272a; --card-hover: #26262b;
+  --tx: #fafafa; --tx-2: #d4d4d8; --tx-3: #a1a1aa;
+  --st-success: #34d399; --st-error: #f87171; --st-warning: #fbbf24; --st-info: #60a5fa;
+  --form-bg: #27272a; --input-border: #3f3f46;
+  --chart-1: #10c878; --chart-2: #60a5fa; --chart-3: #fbbf24; --chart-4: #a78bfa; --chart-5: #f472b6; --chart-6: #2dd4bf;
+}
+[data-theme="midnight"] {
+  --bg: #0a0e1a; --card: #111827; --card-border: #1e293b; --card-hover: #1e293b;
+  --tx: #f0f4ff; --tx-2: #c7d2e8; --tx-3: #7b8db5;
+  --st-success: #34d399; --st-error: #f87171; --st-warning: #fbbf24; --st-info: #93c5fd;
+  --form-bg: #1e293b; --input-border: #334155;
+  --chart-1: #10c878; --chart-2: #60a5fa; --chart-3: #fbbf24; --chart-4: #a78bfa; --chart-5: #f472b6; --chart-6: #2dd4bf;
+}
+[data-theme="forest"] {
+  --bg: #071209; --card: #0d1a10; --card-border: #1a3322; --card-hover: #1a3322;
+  --tx: #e8f5e9; --tx-2: #a5d6a7; --tx-3: #6b9b6e;
+  --st-success: #4ade80; --st-error: #fb7185; --st-warning: #fbbf24; --st-info: #93c5fd;
+  --form-bg: #1a3322; --input-border: #2d5a3a;
+  --chart-1: #34d399; --chart-2: #60a5fa; --chart-3: #fbbf24; --chart-4: #a78bfa; --chart-5: #f472b6; --chart-6: #2dd4bf;
+}
+[data-theme="warm"] {
+  --bg: #faf6f0; --card: #fffdf8; --card-border: #e8dcc8; --card-hover: #f5efe4;
+  --tx: #3d2e1e; --tx-2: #6b5843; --tx-3: #9a8570;
+  --st-success: #059669; --st-error: #dc2626; --st-warning: #b45309; --st-info: #1d4ed8;
+  --form-bg: #fffdf8; --input-border: #d4c4a8;
+  --chart-1: #00AB61; --chart-2: #2563eb; --chart-3: #b45309; --chart-4: #7c3aed; --chart-5: #db2777; --chart-6: #0d9488;
+}
+
+/* shadcn primitive token VALUES, bridged to the AECOM design tokens so the shared @aecom/ui
+   primitives render on the 5-theme system in EVERY app. These reference the auto-flipping vars
+   above, so this single :root definition flips across all themes (the referenced --bg/--tx/--accent
+   change per theme). The matching @theme aliases live in theme-block.css (inlined per app). */
+:root {
+  --background: var(--bg);
+  --foreground: var(--tx);
+  --card-foreground: var(--tx);
+  --popover: var(--card);
+  --popover-foreground: var(--tx);
+  --primary: var(--accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--card-hover);
+  --secondary-foreground: var(--tx);
+  --muted: var(--card-hover);
+  --muted-foreground: var(--tx-3);
+  --accent-foreground: #ffffff;
+  --destructive: var(--st-error);
+  --border: var(--card-border);
+  --input: var(--card-border);
+  --ring: var(--accent);
+  --radius: 0.625rem;
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--tx);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--card-hover);
+  --sidebar-accent-foreground: var(--tx);
+  --sidebar-border: var(--card-border);
+  --sidebar-ring: var(--accent);
+}
+
+/* Base */
+html { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--tx); }
+
+/* Scrollbar - adapts to theme */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--tx-3); border-radius: 4px; opacity: 0.5; }
+
+/* Slim, sleek auto-hiding scrollbar - used by the AppShell sidebar nav + content main.
+   Track + thumb are invisible at rest; the thumb fades in only on hover. */
+.scrollbar-slim { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.scrollbar-slim:hover { scrollbar-color: color-mix(in srgb, var(--tx-3) 45%, transparent) transparent; }
+.scrollbar-slim::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-slim::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-slim::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; transition: background 0.2s ease; }
+.scrollbar-slim:hover::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--tx-3) 40%, transparent); }
+.scrollbar-slim::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--tx-3) 60%, transparent); }
+
+/* Selection - accent tinted (per-app) */
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Monospace numbers */
+.tabular-nums { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+
+/* Recharts tooltip - theme aware */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--card) !important;
+  border: 1px solid var(--card-border) !important;
+  border-radius: 8px !important;
+}
+
+/* Animations */
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.animate-page-enter { animation: fadeSlideIn 220ms ease-out; }
+@keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.animate-slide-in-right { animation: slide-in-right 0.25s ease-out; }
+
+/* Skeleton loading shimmer */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton { position: relative; overflow: hidden; background: var(--card-hover); border-radius: 8px; }
+.skeleton::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--card-border) 55%, transparent), transparent);
+  animation: shimmer 1.5s infinite;
+}
