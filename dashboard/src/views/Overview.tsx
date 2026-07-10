@@ -4,6 +4,7 @@ import { Battery, Zap, Thermometer, HeartPulse, Apple, RotateCw, Pause, Play } f
 import { useData } from '../data/data-context';
 import { flowOf, fmtDur, stateMeta, toneColor } from '../lib/derive';
 import { Card, Kpi, PageHeader, Segmented, Skeleton } from '../kit/ui';
+import { RemoteCommands } from '../components/RemoteCommands';
 
 const OverviewCharts = lazy(() => import('../Charts').then((m) => ({ default: m.OverviewCharts })));
 
@@ -130,6 +131,8 @@ export function Overview() {
           )}
         </Card>
       ) : null}
+
+      <RemoteCommands />
 
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">

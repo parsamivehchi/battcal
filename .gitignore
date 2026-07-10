@@ -4,7 +4,7 @@
 
 node_modules/
 dashboard/dist/
-dashboard/tsconfig.tsbuildinfo
+*.tsbuildinfo
 menubar/build/
 menubar/*.xcodeproj/
 

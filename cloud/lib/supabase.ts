@@ -24,6 +24,7 @@ export const T = {
   cycles: 'battcal_cycles',
   log: 'battcal_log',
   evidence: 'battcal_evidence',
+  commands: 'battcal_commands',
 } as const;
 
 // Serve a single-row doc table's payload (or a fallback when unconfigured/empty).

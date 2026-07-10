@@ -3,6 +3,7 @@ import { RotateCcw, Gauge, Eye } from 'lucide-react';
 import { useData } from '../data/data-context';
 import type { Mode, Schedule } from '../data/types';
 import { Card, ChartCard, PageHeader } from '../kit/ui';
+import { RemoteCommands } from '../components/RemoteCommands';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const toColon = (hhmm?: string) => (hhmm && hhmm.length === 4 ? `${hhmm.slice(0, 2)}:${hhmm.slice(2)}` : '');
@@ -159,10 +160,12 @@ export function Settings() {
         <Card className="flex items-center gap-2">
           <Eye size={15} style={{ color: 'var(--st-info)' }} />
           <span className="text-xs" style={{ color: 'var(--tx-2)' }}>
-            Read-only mirror: controls run on the Mac (local dashboard or menu bar). This page shows the live configuration.
+            Read-only mirror: direct controls run on the Mac (local dashboard or menu bar). Remote commands below are queued intents the Mac validates and executes itself.
           </span>
         </Card>
       )}
+
+      <RemoteCommands />
 
       <ChartCard title="Mode" subtitle="which band the engine cycles in (pause/resume lives on Overview)">
         <div className="grid gap-2 sm:grid-cols-2">

@@ -456,12 +456,29 @@ const json = (res, code, body) => {
 // (e.g. Number('abc')) from silently disabling a downstream filter and returning the whole file.
 const numParam = (v, def, max) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : def; };
 
+// ---- Control primitives ---------------------------------------------------------------------
+// The single implementation behind BOTH the local POST routes and the remote command queue.
+// Everything is a file write the engine picks up on its next poll; nothing here talks to
+// hardware directly, so a bad call can never wedge charging.
+const doPause = () => { writeFileSync(ns().pause, ''); touchOverride(); };
+const doResume = () => { try { unlinkSync(ns().pause); } catch {} touchOverride(); };
+const doBreak = (mins) => {
+  const m = Math.max(1, Math.min(240, Math.round(Number(mins)) || 30));
+  const until = Math.floor(Date.now() / 1000) + m * 60;
+  writeFileSync(ns().pause, String(until) + '\n');
+  touchOverride();
+  return { until, minutes: m };
+};
+const doMode = (m) => { writeFileSync(ns().mode, m + '\n'); touchOverride(); };
+
 // ---- Cloud sync (optional, outbound-only) --------------------------------------------------
 // Pushes read-only snapshots to Supabase so the hosted mirror (mivehchi.dev/battcal) can render
 // them. Gated on ~/.battcal/cloud.json ({ "url": "https://<ref>.supabase.co", "serviceRoleKey":
 // "..." }); absent = every tick is a no-op, so OSS installs and the local flow are unaffected.
-// STRICTLY outbound (the server keeps its 127.0.0.1 bind; nothing inbound is added) and every
-// push is caught: an upload failure can never touch charging state or the local API.
+// All traffic is Mac-INITIATED (the server keeps its 127.0.0.1 bind; nothing inbound is added)
+// and every tick is caught: a cloud failure can never touch charging state or the local API.
+// The command queue below is the one inbound-DATA path: the mirror inserts whitelisted intent
+// rows, and this side polls, re-validates them against its own whitelist, and executes.
 const CLOUD_CONFIG = join(HOME, '.battcal', 'cloud.json');
 const CLOUD_CURSOR = join(HOME, '.battcal', 'cloud-cursor');
 function cloudConfig() {
@@ -528,11 +545,74 @@ async function purgeOldTelemetry(cfg) {
   });
 }
 
+// ---- Remote command queue (Mac-authoritative) ----------------------------------------------
+// The mirror's owner-gated route INSERTs {command, arg} intent rows; this poller claims each
+// pending row with a compare-and-set, re-validates it against the LOCAL whitelist (row contents
+// are never trusted), and executes via the same primitives the local POST routes use. All four
+// commands are idempotent file writes, so the worst double-delivery outcome is a no-op.
+async function cloudRest(cfg, method, pathq, body) {
+  const res = await fetch(`${cfg.url}/rest/v1/${pathq}`, {
+    method,
+    headers: {
+      apikey: cfg.serviceRoleKey,
+      authorization: `Bearer ${cfg.serviceRoleKey}`,
+      'content-type': 'application/json',
+      prefer: method === 'PATCH' ? 'return=representation' : 'return=minimal',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${pathq.split('?')[0]}: HTTP ${res.status}`);
+  return method === 'GET' || method === 'PATCH' ? res.json() : null;
+}
+
+const COMMAND_MAX_AGE_MS = 10 * 60e3; // stale intents expire unexecuted (phone taps, not a backlog)
+function checkCommand(row) {
+  const c = String(row.command || '');
+  if (c === 'pause') return { run: doPause, result: 'paused' };
+  if (c === 'resume') return { run: doResume, result: 'resumed' };
+  if (c === 'mode') {
+    const m = String(row.arg || '');
+    if (!MODES.includes(m)) return { reject: `mode must be one of: ${MODES.join(', ')}` };
+    return { run: () => doMode(m), result: `mode -> ${m}` };
+  }
+  if (c === 'break') {
+    const n = Math.round(Number(row.arg));
+    if (!Number.isFinite(n) || n < 1 || n > 240) return { reject: 'break minutes must be 1-240' };
+    return { run: () => doBreak(n), result: `break ${n}m` };
+  }
+  return { reject: `unknown command: ${c.slice(0, 40)}` };
+}
+
+async function pollCommands(cfg) {
+  const pending = await cloudRest(cfg, 'GET', 'battcal_commands?status=eq.pending&order=id.asc&limit=5');
+  if (!Array.isArray(pending) || !pending.length) return;
+  let acted = false;
+  for (const row of pending) {
+    const stale = Date.now() - new Date(row.created_at).getTime() > COMMAND_MAX_AGE_MS;
+    const v = stale ? { reject: 'expired unexecuted' } : checkCommand(row);
+    const patch = {
+      status: stale ? 'expired' : v.reject ? 'rejected' : 'done',
+      executed_at: new Date().toISOString(),
+      result: v.reject || v.result,
+    };
+    // Compare-and-set on status=pending: zero rows back means another writer already
+    // settled this row (e.g. an overlapping tick after a slow request) - skip it.
+    const won = await cloudRest(cfg, 'PATCH', `battcal_commands?id=eq.${Number(row.id)}&status=eq.pending`, patch);
+    if (!Array.isArray(won) || !won.length || v.reject || stale) continue;
+    v.run();
+    console.log(`cloud command #${row.id}: ${v.result}`);
+    acted = true;
+  }
+  // Reflect the effect immediately so the mirror's next status poll shows it.
+  if (acted) await cloudDoc(cfg, 'battcal_status', status());
+}
+
 // Cadences: status 30 s; telemetry every 60 s; cycles/log/evidence (+ daily purge) every 5 min.
 setInterval(async () => {
   const cfg = cloudConfig();
   if (!cfg) return;
   try { await cloudDoc(cfg, 'battcal_status', status()); } catch (e) { cloudErr(e); }
+  try { await pollCommands(cfg); } catch (e) { cloudErr(e); }
 }, 30e3);
 setInterval(async () => {
   const cfg = cloudConfig();
@@ -591,16 +671,13 @@ createServer((req, res) => {
       writeFileSync(n.mode, prevMode + '\n');
       return json(res, 200, { prep: false, mode: prevMode });
     }
-    if (p === '/api/pause' && req.method === 'POST') { writeFileSync(ns().pause, ''); touchOverride(); return json(res, 200, { paused: true }); }
-    if (p === '/api/resume' && req.method === 'POST') { try { unlinkSync(ns().pause); } catch {} touchOverride(); return json(res, 200, { paused: false }); }
+    if (p === '/api/pause' && req.method === 'POST') { doPause(); return json(res, 200, { paused: true }); }
+    if (p === '/api/resume' && req.method === 'POST') { doResume(); return json(res, 200, { paused: false }); }
     if (p === '/api/break' && req.method === 'POST') {
       // Timed benchmark break: pause now, auto-resume after N minutes. The engine
       // honors the epoch, so the break ends even with every UI closed.
-      const mins = Math.max(1, Math.min(240, Math.round(Number(url.searchParams.get('minutes')) || 30)));
-      const until = Math.floor(Date.now() / 1000) + mins * 60;
-      writeFileSync(ns().pause, String(until) + '\n');
-      touchOverride();
-      return json(res, 200, { paused: true, breakUntil: until, minutes: mins });
+      const b = doBreak(url.searchParams.get('minutes'));
+      return json(res, 200, { paused: true, breakUntil: b.until, minutes: b.minutes });
     }
     if (p === '/api/mode' && req.method === 'POST') {
       let body = '';
@@ -614,8 +691,7 @@ createServer((req, res) => {
           let m = url.searchParams.get('mode');
           try { m = JSON.parse(body).mode || m; } catch {}
           if (!MODES.includes(m)) return json(res, 400, { error: `mode must be one of: ${MODES.join(', ')}` });
-          writeFileSync(ns().mode, m + '\n');
-          touchOverride();
+          doMode(m);
           return json(res, 200, { mode: m, band: BANDS[m] });
         } catch (e) {
           return json(res, 500, { error: String(e?.message || e) });
