@@ -1,6 +1,0 @@
-
-# cloud (Next.js)
-cloud/.next/
-cloud/.vercel/
-.env*
-!.env.example

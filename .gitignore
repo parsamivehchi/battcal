@@ -7,3 +7,9 @@ dashboard/dist/
 dashboard/tsconfig.tsbuildinfo
 menubar/build/
 menubar/*.xcodeproj/
+
+# cloud (Next.js)
+cloud/.next/
+cloud/.vercel/
+.env*
+!.env.example
