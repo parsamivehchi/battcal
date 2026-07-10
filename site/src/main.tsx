@@ -6,11 +6,11 @@ import App from './App';
 
 inject();
 
-// Vercel BotID protects the contact endpoint; classification happens server-side in
-// api/contact.ts. Failure to load the client beacon must never break the page.
-import('botid/client/core')
-  .then((m) => m.initBotId({ protect: [{ path: '/battcal/api/contact', method: 'POST' }] }))
-  .catch(() => {});
+// NOTE: no BotID client here on purpose. The page is served through the mivehchi.app
+// proxy where BotID's beacon paths do not exist, and its fetch interception then makes
+// every genuine form POST reject (verified live 2026-07-10). Bot defense is layered in
+// api/contact.ts instead: honeypot, minimum fill time, per-IP rate limit, deceptive 200.
+// If real CAPTCHA pressure appears, add Cloudflare Turnstile (works cross-proxy).
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
