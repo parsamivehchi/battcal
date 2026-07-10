@@ -13,7 +13,7 @@ import type { Metadata } from "next";
 import { LoginCard } from "./login-card";
 
 export const metadata: Metadata = {
-  title: "Battcal - Sign in",
+  title: "BattCal - Sign in",
   robots: { index: false, follow: false },
 };
 
@@ -40,7 +40,7 @@ export default async function LoginPage({ searchParams }: Props) {
       {/* Paints the theme onto <html> before first paint so a dark-mode owner is never flashed white.
           It only touches documentElement attributes, which React does not manage, so hydration keeps them. */}
       <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
-      <LoginCard authStart="__AUTH_START__" error={msg} />
+      <LoginCard authStart="/battcal/auth/start" error={msg} />
     </>
   );
 }

@@ -122,7 +122,7 @@ export function LoginCard({ authStart, error }: { authStart: string; error: stri
           </button>
         </div>
 
-        <h1 className="prsa-title">Battcal</h1>
+        <h1 className="prsa-title">BattCal</h1>
         <p className="prsa-clock" suppressHydrationWarning>{clock}</p>
 
         {error && (
