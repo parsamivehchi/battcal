@@ -13,3 +13,4 @@ cloud/.next/
 cloud/.vercel/
 .env*
 !.env.example
+progress/
