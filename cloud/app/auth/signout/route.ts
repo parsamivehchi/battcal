@@ -3,11 +3,17 @@
 // itself is unaffected; the owner stays signed in to the identity provider.)
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth/session";
+import { OIDC } from "@/lib/auth/oidc";
+
+// Host-relative Location resolved from the registered redirect_uri's basePath - request.url is the
+// *.vercel.app plumbing origin behind an apex rewrite and must never decide where the browser goes.
+const BASE = new URL(OIDC.redirectUri).pathname.replace(/\/auth\/callback$/, "");
 
 export async function POST() {
-  // Relative Location: behind the mivehchi.dev proxy, request.url carries the rewrite-destination
-  // origin, so an absolute redirect would leak the plumbing host. 303 turns the POST into a GET.
-  const res = new NextResponse(null, { status: 303, headers: { Location: "/battcal/login" } });
+  const res = new NextResponse(null, {
+    status: 303,
+    headers: { Location: `${BASE}/login` },
+  });
   res.cookies.delete(SESSION_COOKIE);
   return res;
 }

@@ -7,9 +7,17 @@ import { cookies } from "next/headers";
 import { OIDC, verifyTx, verifyIdToken } from "@/lib/auth/oidc";
 import { signSession, SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/auth/session";
 import { isOwnerEmail } from "@/lib/auth/owner";
+import { onAuthEvent } from "@/lib/auth/hooks";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Canonical base path derived from the registered redirect_uri (always apex + basePath +
+// /auth/callback). Behind an apex rewrite, request.url carries the *.vercel.app plumbing origin -
+// building absolute redirects from it strands the browser on a host where the host-only cookies
+// do not exist (login then fails as "expired"). Host-relative Locations resolve on whatever
+// canonical origin the browser is already on, so the plumbing host can never leak.
+const BASE = new URL(OIDC.redirectUri).pathname.replace(/\/auth\/callback$/, "");
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -18,13 +26,10 @@ export async function GET(request: Request) {
   const oauthError = url.searchParams.get("error");
   const jar = await cookies();
 
-  // basePath /battcal + served through the mivehchi.dev proxy: route handlers see the rewrite
-  // DESTINATION origin in request.url, so redirects must be RELATIVE Locations (the browser
-  // resolves them against the canonical origin); an absolute URL would leak the plumbing host.
   const backToLogin = (reason: string) => {
     const res = new NextResponse(null, {
       status: 307,
-      headers: { Location: `/battcal/login?error=${encodeURIComponent(reason)}` },
+      headers: { Location: `${BASE}/login?error=${encodeURIComponent(reason)}` },
     });
     res.cookies.delete("battcal_oidc_tx");
     return res;
@@ -72,12 +77,16 @@ export async function GET(request: Request) {
   }
 
   if (!isOwnerEmail(email)) {
+    void onAuthEvent("denied_not_owner", { email: email ?? null });
     return backToLogin("not_owner");
   }
 
+  void onAuthEvent("sign_in", { email });
   const token = await signSession({ sub, email: email! });
-  // Relative Location (see backToLogin note): stays on the canonical origin.
-  const res = new NextResponse(null, { status: 307, headers: { Location: "/battcal" } });
+  const res = new NextResponse(null, {
+    status: 307,
+    headers: { Location: BASE || "/" },
+  });
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: true,
