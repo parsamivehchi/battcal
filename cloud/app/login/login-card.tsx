@@ -44,6 +44,9 @@ export function LoginCard({ authStart, error }: { authStart: string; error: stri
   const [mode, setMode] = useState<Mode>("system");
 
   useEffect(() => {
+    // Deliberate mount-only reconcile: host/clock/theme are browser-only values that MUST be
+    // written post-hydration (SSR renders them empty), per the fleet login-screen conventions.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHost(window.location.hostname);
 
     const tick = () => setClock(formatNow(new Date()));
