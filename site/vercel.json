@@ -3,6 +3,12 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "header", "key": "x-forwarded-host", "value": "battcal-site.vercel.app" }],
+      "destination": "https://mivehchi.app/battcal",
+      "permanent": false
+    },
     { "source": "/", "destination": "/battcal", "permanent": false }
   ],
   "rewrites": [
