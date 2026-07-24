@@ -6,6 +6,7 @@
     {
       "source": "/:path*",
       "has": [{ "type": "header", "key": "x-forwarded-host", "value": "battcal-site.vercel.app" }],
+      "missing": [{ "type": "header", "key": "x-cf-mount-host" }],
       "destination": "https://mivehchi.app/battcal",
       "permanent": false
     },
