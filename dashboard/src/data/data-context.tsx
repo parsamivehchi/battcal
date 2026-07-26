@@ -112,6 +112,8 @@ export function DataProvider({ source, children }: { source: BattcalDataSource; 
         case 'mode': res = await controls.setMode(arg as Mode); break;
         case 'startPrep': res = await controls.startPrep(); break;
         case 'endPrep': res = await controls.endPrep(); break;
+        case 'quitEngine': res = await controls.quitEngine(); break;
+        case 'startEngine': res = await controls.startEngine(); break;
         case 'schedule': res = await controls.writeSchedule(arg as { enabled: boolean }); break;
         default: return;
       }

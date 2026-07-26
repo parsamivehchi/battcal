@@ -7,6 +7,7 @@ struct PopoverView: View {
     var onPopOut: () -> Void = {}
     var onOpenSettings: () -> Void = {}   // routed to AppDelegate.showSettings() by both hosts
     var inWindow: Bool = false   // true when hosted in the standalone window (no pop-out button)
+    @State private var showQuitDialog = false
 
     private var s: EngineStatus? { model.status }
 
@@ -193,7 +194,20 @@ struct PopoverView: View {
                     Button { onOpenSettings() } label: { Label("Settings", systemImage: "gearshape") }
                         .buttonStyle(.plain).font(.caption)
                     Spacer()
-                    Button("Quit") { NSApp.terminate(nil) }.font(.caption)
+                    // Quitting the APP never stopped the ENGINE (a separate LaunchAgent), which
+                    // surprised in the field - so Quit now forces the choice. With the engine
+                    // already off there is nothing to restore; quit plainly.
+                    Button("Quit") {
+                        if model.engineLoaded { showQuitDialog = true } else { NSApp.terminate(nil) }
+                    }
+                    .font(.caption)
+                    .confirmationDialog("Quit BattCal?", isPresented: $showQuitDialog, titleVisibility: .visible) {
+                        Button("Quit and restore Apple charging") { model.quitBattCal() }
+                        Button("Quit app only (engine keeps cycling)") { NSApp.terminate(nil) }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Restore stops the cycling engine until you start it again (mode selector or dashboard) and hands charging back to macOS: adapter on, 100% limit, stock MagSafe light - as if BattCal were never installed.")
+                    }
                 }
             }
         }

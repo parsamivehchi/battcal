@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RotateCcw, Gauge, Eye } from 'lucide-react';
+import { RotateCcw, Gauge, Eye, Power } from 'lucide-react';
 import { useData } from '../data/data-context';
 import type { Mode, Schedule } from '../data/types';
 import { Card, ChartCard, PageHeader } from '../kit/ui';
@@ -119,6 +119,57 @@ function ScheduleEditor({ schedule, onSave, readOnly }: {
   );
 }
 
+// True off switch. Quit boots out AND disables the engine agent, then restores stock Apple
+// charging (adapter on, 100% limit, stock MagSafe light) - as if BattCal were never installed.
+// Start re-enables + bootstraps it. Two-step inline confirm so a stray click cannot quit.
+// Local-only by design: the read-only mirror shows state text, never buttons, and the remote
+// command queue deliberately excludes quit/start.
+function EnginePower() {
+  const { status, readOnly, doControl } = useData();
+  const [confirming, setConfirming] = useState(false);
+  const loaded = status?.engineLoaded;
+  if (loaded === undefined) return null; // older server without the probe: no card
+
+  const btn = (label: string, tint: string, onClick: () => void) => (
+    <button type="button" onClick={onClick}
+      className="rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+      style={{
+        borderColor: `color-mix(in srgb, ${tint} 45%, transparent)`,
+        background: `color-mix(in srgb, ${tint} 12%, transparent)`,
+        color: tint,
+      }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <ChartCard title="Engine power" subtitle="the true off switch - off means stock Apple charging, nothing left running">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+          style={{
+            background: `color-mix(in srgb, ${loaded ? 'var(--st-success, #16a34a)' : 'var(--tx-3)'} 14%, transparent)`,
+            color: loaded ? 'var(--st-success, #16a34a)' : 'var(--tx-3)',
+          }}>
+          <Power size={16} />
+        </span>
+        <p className="min-w-40 flex-1 text-xs" style={{ color: 'var(--tx-2)' }}>
+          {loaded
+            ? 'Engine running - cycling per the mode, work schedule, and home Wi-Fi gates.'
+            : 'Engine OFF - this Mac charges exactly like a stock Mac (adapter on, 100% limit, stock MagSafe light). Nothing restarts at login until you start it again.'}
+        </p>
+        {!readOnly && (loaded
+          ? (confirming
+              ? <span className="flex items-center gap-2">
+                  {btn('Confirm quit - restore Apple charging', 'var(--st-error, #dc2626)', () => { setConfirming(false); doControl('quitEngine', 'Quit engine'); })}
+                  {btn('Cancel', 'var(--tx-2)', () => setConfirming(false))}
+                </span>
+              : btn('Quit BattCal engine…', 'var(--st-error, #dc2626)', () => setConfirming(true)))
+          : btn('Start engine', 'var(--st-success, #16a34a)', () => doControl('startEngine', 'Start engine')))}
+      </div>
+    </ChartCard>
+  );
+}
+
 export function Settings() {
   const { status, readOnly, doControl } = useData();
   const mode = status?.mode ?? 'longevity';
@@ -181,6 +232,8 @@ export function Settings() {
           onSave={(p) => doControl('schedule', 'Schedule update', p)}
         />
       </ChartCard>
+
+      <EnginePower />
 
       <ChartCard title="How BattCal works" subtitle="the four states, with the active one highlighted">
         <div className="space-y-2">

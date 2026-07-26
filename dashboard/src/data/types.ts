@@ -31,6 +31,7 @@ export interface Status {
   prep: { active: boolean; startedAt: number | null } | null;
   pausedBy?: 'schedule' | 'user' | null;  // 'schedule' = the engine's off-hours pause; undefined on older servers
   schedule?: Schedule;         // work-schedule config + whether now is inside the window
+  engineLoaded?: boolean;      // launchctl says the engine agent is loaded; false after a true quit; undefined on older servers
   updatedAt: string;
 }
 

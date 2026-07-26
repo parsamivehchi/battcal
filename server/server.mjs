@@ -175,6 +175,22 @@ function readCondition() {
   return condCache.condition;
 }
 
+// Engine agent load state, cached: launchctl spawns a process per probe and /api/status is
+// polled every 15 s by the menu bar. Quit/start invalidate the cache so UIs flip instantly.
+let engineCache = { at: 0, label: null, loaded: null };
+function engineLoaded() {
+  const label = ns().agentLabel;
+  if (engineCache.label !== label || Date.now() - engineCache.at > 60_000) {
+    let loaded = false;
+    try {
+      execFileSync('/bin/launchctl', ['print', `gui/${process.getuid()}/${label}`], { stdio: 'ignore' });
+      loaded = true;
+    } catch {}
+    engineCache = { at: Date.now(), label, loaded };
+  }
+  return engineCache.loaded;
+}
+
 function status() {
   const n = ns();
   const ior = ioregBattery();
@@ -235,6 +251,7 @@ function status() {
     schedule: { ...schedule, inWindow: scheduleInWindow(schedule) },
     namespace: n.agentLabel, // launchctl agent label, so the menu bar controls the right one on any install
     namespaceConflict: namespaceConflict(), // both installs' state files exist; controls target the first (personal) one
+    engineLoaded: engineLoaded(), // launchctl says the engine agent is loaded (false after a true quit)
     mode,
     band: BANDS[mode],
     condition,
@@ -471,6 +488,53 @@ const doBreak = (mins) => {
 };
 const doMode = (m) => { writeFileSync(ns().mode, m + '\n'); touchOverride(); };
 
+// ---- True quit / start ----------------------------------------------------------------------
+// Quit = hand charging back to Apple entirely, as if BattCal were never installed: the engine
+// agent is booted out AND disabled (RunAtLoad cannot resurrect it at the next login), the
+// software adapter cut is lifted, the charge limit returns to 100, and the MagSafe LED scheme
+// reverts to stock. Engine state files are cleared so a later start begins clean - EXCEPT the
+// .state file: ns() keys namespace detection on its existence, and deleting it would silently
+// retarget every control (including /api/start) at the other install's label.
+const launchctlRun = (args) => { try { execFileSync('/bin/launchctl', args, { stdio: 'ignore' }); } catch {} };
+const battRun = (args) => { try { execFileSync('/opt/homebrew/bin/batt', args, { stdio: 'ignore' }); } catch {} };
+const doQuit = () => {
+  const n = ns();
+  const uid = process.getuid();
+  const base = n.state.replace(/\.state$/, '');
+  // Remove a leftover deploy marker FIRST: without it the engine's EXIT trap also restores
+  // the adapter itself as it dies (unmanaged-death path) - belt and braces with battRun below.
+  try { unlinkSync(`${base}.managed-restart`); } catch {}
+  launchctlRun(['bootout', `gui/${uid}/${n.agentLabel}`]);
+  launchctlRun(['disable', `gui/${uid}/${n.agentLabel}`]);
+  // bootout returns while launchd is still tearing the KeepAlive'd engine down (SIGTERM ->
+  // EXIT trap -> exit takes a few seconds), and the dying engine can write state files one
+  // last time. Wait for the service to actually leave the domain so the cleanup below is
+  // final, not raced (worst case ~8 s; typically <2 s).
+  for (let i = 0; i < 16; i++) {
+    try { execFileSync('/bin/launchctl', ['print', `gui/${uid}/${n.agentLabel}`], { stdio: 'ignore' }); }
+    catch { break; }
+    try { execFileSync('/bin/sleep', ['0.5']); } catch {}
+  }
+  battRun(['adapter', 'enable']);
+  battRun(['limit', '100']);
+  battRun(['magsafe-led', 'disable']);
+  for (const f of [n.pause, n.mode, n.prep, n.schedOverride, n.onBatteryStart,
+                   `${base}.holdstart`, `${base}.cyclestart`, `${base}.schedule-phase`]) {
+    try { unlinkSync(f); } catch {}
+  }
+  engineCache = { at: 0, label: null, loaded: null };
+};
+// Start = undo a quit: re-enable FIRST (bootstrap of a disabled agent fails silently), then
+// bootstrap the plist. The engine's installer contract applies: it comes back PAUSED only if
+// the pause file exists, which doQuit cleared, so cycling resumes per mode/schedule/home gates.
+const doStart = () => {
+  const n = ns();
+  const uid = process.getuid();
+  launchctlRun(['enable', `gui/${uid}/${n.agentLabel}`]);
+  launchctlRun(['bootstrap', `gui/${uid}`, join(HOME, 'Library/LaunchAgents', `${n.agentLabel}.plist`)]);
+  engineCache = { at: 0, label: null, loaded: null };
+};
+
 // ---- Cloud sync (optional, outbound-only) --------------------------------------------------
 // Pushes read-only snapshots to Supabase so the hosted mirror (mivehchi.dev/battcal) can render
 // them. Gated on ~/.battcal/cloud.json ({ "url": "https://<ref>.supabase.co", "serviceRoleKey":
@@ -671,6 +735,8 @@ createServer((req, res) => {
       writeFileSync(n.mode, prevMode + '\n');
       return json(res, 200, { prep: false, mode: prevMode });
     }
+    if (p === '/api/quit' && req.method === 'POST') { doQuit(); return json(res, 200, { engineLoaded: false, restored: 'apple-default' }); }
+    if (p === '/api/start' && req.method === 'POST') { doStart(); return json(res, 200, { engineLoaded: engineLoaded() }); }
     if (p === '/api/pause' && req.method === 'POST') { doPause(); return json(res, 200, { paused: true }); }
     if (p === '/api/resume' && req.method === 'POST') { doResume(); return json(res, 200, { paused: false }); }
     if (p === '/api/break' && req.method === 'POST') {

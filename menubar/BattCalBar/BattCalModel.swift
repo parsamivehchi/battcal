@@ -234,6 +234,36 @@ final class BattCalModel: ObservableObject {
     func pause() { post("api/pause") }
     func resume() { post("api/resume") }
 
+    // TRUE quit: hand charging back to Apple entirely - the engine agent is booted out AND
+    // disabled (so login cannot resurrect it), the software adapter cut is lifted, the charge
+    // limit returns to 100, and the MagSafe LED reverts to stock - then this app terminates.
+    // The server owns the primitives (POST /api/quit); when it is unreachable the same steps
+    // run directly, so Quit never depends on the dashboard server being up.
+    func quitBattCal() {
+        Task {
+            var done = false
+            if reachable {
+                let req = Self.controlRequest(base.appendingPathComponent("api/quit"))
+                if let (_, resp) = try? await URLSession.shared.data(for: req),
+                   (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true {
+                    done = true
+                }
+            }
+            if !done {
+                let label = agentLabel
+                let uid = getuid()
+                await Task.detached {
+                    Self.run("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+                    Self.run("/bin/launchctl", ["disable", "gui/\(uid)/\(label)"])
+                    Self.run("/opt/homebrew/bin/batt", ["adapter", "enable"])
+                    Self.run("/opt/homebrew/bin/batt", ["limit", "100"])
+                    Self.run("/opt/homebrew/bin/batt", ["magsafe-led", "disable"])
+                }.value
+            }
+            NSApp.terminate(nil)
+        }
+    }
+
     // Timed "benchmark break": pause calibration now, auto-resume after `minutes`.
     // Uses a relative URL with a query (not post(), which would encode the "?").
     func benchmarkBreak(minutes: Int) {
@@ -433,8 +463,15 @@ final class BattCalModel: ObservableObject {
     func select(_ target: ActiveMode) {
         Task {
             if !engineLoaded, target != .off {
-                let args = ["bootstrap", "gui/\(getuid())", agentPlist]
-                _ = await Task.detached { Self.run("/bin/launchctl", args) }.value
+                // A prior true-quit leaves the agent DISABLED, and bootstrap of a disabled
+                // agent fails silently - so always enable first (harmless when already enabled).
+                let uid = getuid()
+                let label = agentLabel
+                let plist = agentPlist
+                _ = await Task.detached {
+                    Self.run("/bin/launchctl", ["enable", "gui/\(uid)/\(label)"])
+                    return Self.run("/bin/launchctl", ["bootstrap", "gui/\(uid)", plist])
+                }.value
             }
             switch target {
             case .longevity, .calibration:

@@ -34,6 +34,11 @@ export interface BattcalControls {
   startPrep: () => Promise<Response>;
   endPrep: () => Promise<Response>;
   writeSchedule: (s: { enabled: boolean; days?: number[]; start?: string; end?: string }) => Promise<Response>;
+  // True off switch: quit stops AND disables the engine agent and restores stock Apple
+  // charging (adapter on, 100% limit, stock MagSafe light); start re-enables + bootstraps it.
+  // Local-only on purpose: the cloud command queue deliberately excludes both.
+  quitEngine: () => Promise<Response>;
+  startEngine: () => Promise<Response>;
 }
 
 export interface BattcalDataSource {
@@ -70,6 +75,8 @@ export function liveDataSource(apiBase = ''): BattcalDataSource {
       setMode: (mode) => send(`/api/mode?mode=${mode}`, 'POST'),
       startPrep: () => send('/api/prep', 'POST'),
       endPrep: () => send('/api/prep', 'DELETE'),
+      quitEngine: () => send('/api/quit', 'POST'),
+      startEngine: () => send('/api/start', 'POST'),
       writeSchedule: (s) =>
         fetch(`${apiBase}/api/schedule`, {
           method: 'POST',
