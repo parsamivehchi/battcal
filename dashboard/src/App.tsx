@@ -7,6 +7,7 @@ import { ThemeProvider } from './kit/ThemeProvider';
 import { AppShell } from './kit/shell/AppShell';
 import { DataProvider, useData } from './data/data-context';
 import type { BattcalDataSource } from './data/data-source';
+import type { ExternalNavItem } from './nav';
 import { stateMeta, toneColor } from './lib/derive';
 import { Overview } from './views/Overview';
 import { Health } from './views/Health';
@@ -73,14 +74,16 @@ export interface AppProps {
   source: BattcalDataSource;
   basename?: string;
   signoutAction?: string;
+  // Host-owned pages outside this SPA's router (cloud mirror only).
+  externalNav?: ExternalNavItem[];
 }
 
-export default function App({ source, basename, signoutAction }: AppProps) {
+export default function App({ source, basename, signoutAction, externalNav }: AppProps) {
   return (
     <ThemeProvider>
       <DataProvider source={source}>
         <BrowserRouter basename={basename}>
-          <AppShell sidebarExtras={<SidebarStatus />} signoutAction={signoutAction}>
+          <AppShell sidebarExtras={<SidebarStatus />} signoutAction={signoutAction} externalNav={externalNav}>
             <GlobalNotices />
             <Routes>
               <Route path="/overview" element={<Overview />} />

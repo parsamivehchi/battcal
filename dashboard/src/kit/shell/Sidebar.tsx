@@ -5,14 +5,22 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { BatteryCharging, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { NAV_ITEMS } from '../../nav';
+import { NAV_ITEMS, type ExternalNavItem } from '../../nav';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
 const COLLAPSE_KEY = 'battcal.sidebar.collapsed';
 const MOBILE_QUERY = '(max-width: 767px)';
 const ACCENT = 'var(--accent)';
 
-export function Sidebar({ extras, signoutAction }: { extras?: ReactNode; signoutAction?: string }) {
+export function Sidebar({
+  extras,
+  signoutAction,
+  externalNav,
+}: {
+  extras?: ReactNode;
+  signoutAction?: string;
+  externalNav?: ExternalNavItem[];
+}) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       // Mobile starts collapsed regardless of the stored desktop preference.
@@ -118,6 +126,29 @@ export function Sidebar({ extras, signoutAction }: { extras?: ReactNode; signout
                 </kbd>
               )}
             </NavLink>
+          );
+        })}
+
+        {/* Pages owned by the host app, not this SPA's router: real anchors, full page load. */}
+        {externalNav?.map((item) => {
+          const Icon = item.icon;
+          return (
+            <a
+              key={item.href}
+              href={item.href}
+              title={collapsed ? item.label : undefined}
+              className="group flex items-center gap-2.5 rounded-md px-2 py-2 text-[13px] font-medium transition-colors"
+              style={{ background: 'transparent', color: 'var(--tx-2)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--card-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <Icon size={17} className="shrink-0" />
+              {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+            </a>
           );
         })}
       </nav>

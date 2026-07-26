@@ -5,11 +5,12 @@
 // methods are absent from the source AND this app ships no control routes.
 import dynamic from 'next/dynamic';
 import { cloudDataSource } from '../../dashboard/src/data/data-source';
+import { CLOUD_EXTERNAL_NAV } from '../../dashboard/src/nav';
 
 const App = dynamic(() => import('../../dashboard/src/App'), { ssr: false });
 
 const source = cloudDataSource('/battcal');
 
 export default function DashboardClient() {
-  return <App source={source} basename="/battcal" signoutAction="/battcal/auth/signout" />;
+  return <App source={source} basename="/battcal" signoutAction="/battcal/auth/signout" externalNav={CLOUD_EXTERNAL_NAV} />;
 }

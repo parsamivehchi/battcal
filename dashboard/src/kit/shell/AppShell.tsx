@@ -3,7 +3,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
-import { NAV_ITEMS } from '../../nav';
+import { NAV_ITEMS, type ExternalNavItem } from '../../nav';
 
 // Scroll the content region to the top on route change, and to a #hash if present.
 function ScrollManager() {
@@ -43,14 +43,16 @@ export function AppShell({
   children,
   sidebarExtras,
   signoutAction,
+  externalNav,
 }: {
   children: ReactNode;
   sidebarExtras?: ReactNode;
   signoutAction?: string;
+  externalNav?: ExternalNavItem[];
 }) {
   return (
     <div className="flex" style={{ background: 'var(--bg)', minHeight: '100vh' }}>
-      <Sidebar extras={sidebarExtras} signoutAction={signoutAction} />
+      <Sidebar extras={sidebarExtras} signoutAction={signoutAction} externalNav={externalNav} />
       <div className="flex min-w-0 flex-1 flex-col" style={{ height: '100vh' }}>
         <main id="bc-main" className="scrollbar-slim flex-1 overflow-y-auto">
           <ScrollManager />
