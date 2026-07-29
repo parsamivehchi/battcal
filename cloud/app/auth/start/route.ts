@@ -1,21 +1,26 @@
 // Begin "Sign in with prsa.me": mint a PKCE challenge + state + nonce, stash them in a signed
-// short-lived cookie, and redirect to the prsa.me authorization endpoint. prsa.me enforces the
-// owner's password + passkey/TOTP (AAL2) before it will issue a code back to /auth/callback.
-import { NextResponse } from "next/server";
-import { OIDC, pkce, randToken, signTx } from "@/lib/auth/oidc";
+// short-lived cookie, and redirect to the broker's authorization endpoint. The broker enforces
+// the owner's password + passkey/TOTP (AAL2) before it will issue a code back to /auth/callback.
+//
+// Host-aware: the flow's endpoints derive from the apex that served this request (oidcFor), so a
+// pmcdn.me visitor's whole round trip stays on pmcdn.me. The chosen issuer rides in the signed
+// transaction cookie so /auth/callback redeems and verifies against the same apex.
+import { type NextRequest, NextResponse } from "next/server";
+import { oidcFor, pkce, randToken, signTx } from "@/lib/auth/oidc";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const flow = oidcFor(req.headers.get("x-forwarded-host") ?? req.nextUrl.host);
   const { verifier, challenge } = pkce();
   const state = randToken();
   const nonce = randToken();
-  const tx = await signTx({ verifier, state, nonce });
+  const tx = await signTx({ verifier, state, nonce, iss: flow.issuer });
 
-  const u = new URL(OIDC.authorizeUrl);
-  u.searchParams.set("client_id", OIDC.clientId);
-  u.searchParams.set("redirect_uri", OIDC.redirectUri);
+  const u = new URL(flow.authorizeUrl);
+  u.searchParams.set("client_id", flow.clientId);
+  u.searchParams.set("redirect_uri", flow.redirectUri);
   u.searchParams.set("response_type", "code");
   u.searchParams.set("scope", "openid email profile");
   u.searchParams.set("state", state);

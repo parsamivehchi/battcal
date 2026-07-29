@@ -4,7 +4,7 @@
 // back on /login with a reason and clears the transaction cookie.
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { OIDC, verifyTx, verifyIdToken } from "@/lib/auth/oidc";
+import { OIDC, oidcFor, verifyTx, verifyIdToken } from "@/lib/auth/oidc";
 import { signSession, SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/auth/session";
 import { isOwnerEmail } from "@/lib/auth/owner";
 import { onAuthEvent } from "@/lib/auth/hooks";
@@ -42,18 +42,23 @@ export async function GET(request: Request) {
   if (!tx) return backToLogin("expired");
   if (tx.state !== state) return backToLogin("state_mismatch");
 
-  // Exchange the authorization code (+ PKCE verifier) for tokens at prsa.me.
+  // The flow's apex rode in the signed tx cookie (set by /auth/start): redeem the code and
+  // verify the issuer against the SAME apex the browser flow ran on. A tx without iss (minted by
+  // a pre-dual-apex deploy) falls back to the env-pinned configuration.
+  const flow = tx.iss ? oidcFor(new URL(tx.iss).host) : OIDC;
+
+  // Exchange the authorization code (+ PKCE verifier) for tokens at the broker.
   let idToken: string | undefined;
   try {
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: OIDC.redirectUri,
-      client_id: OIDC.clientId,
-      client_secret: OIDC.clientSecret,
+      redirect_uri: flow.redirectUri,
+      client_id: flow.clientId,
+      client_secret: flow.clientSecret,
       code_verifier: tx.verifier,
     });
-    const r = await fetch(OIDC.tokenUrl, {
+    const r = await fetch(flow.tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
@@ -69,7 +74,7 @@ export async function GET(request: Request) {
   let email: string | undefined;
   let sub: string;
   try {
-    const claims = await verifyIdToken(idToken, tx.nonce);
+    const claims = await verifyIdToken(idToken, tx.nonce, flow.issuer);
     email = claims.email;
     sub = claims.sub;
   } catch {
