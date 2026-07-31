@@ -3,10 +3,11 @@
 // The sign-in card. Fully self-contained (inline <style>, no Tailwind, no @prsa/ui) so it renders
 // identically in every host app regardless of that app's CSS.
 //
-// Visual identity: matches the prsa.me hub login (dark glass card, quiet glow, one accent) and is
-// deliberately theme-INDEPENDENT - pre-auth surfaces are always dark glass, so there is no theme
-// toggle and no theme boot script here. Values mirror @prsa/theme's --glass-* tokens, inlined
-// because this card cannot import workspace packages.
+// Visual identity: matches the prsa.me hub login (glass card, quiet glow, one accent) and FOLLOWS
+// THE SYSTEM COLOUR SCHEME (owner directive 2026-07-31: login surfaces must match the OS setting,
+// never blind a dark room) - dark glass is the base, with a prefers-color-scheme:light override
+// block; pure CSS, no theme toggle and no theme boot script here. Values mirror @prsa/theme's
+// --glass-* tokens, inlined because this card cannot import workspace packages.
 //
 // Client component on purpose:
 //   - Behind a path rewrite (mivehchi.net/investments -> investments-*.vercel.app) the SERVER sees the
@@ -117,4 +118,16 @@ const CSS = `
 .prsa-btn:hover{background:#4d96ff;}
 .prsa-btn:focus-visible{outline:2px solid rgba(38,128,255,.6);outline-offset:2px;}
 @media (prefers-reduced-motion:reduce){.prsa-btn{transition:none;}}
+@media (prefers-color-scheme: light){
+.prsa-login{background:#f4f5f8;color:#16181d;color-scheme:light;}
+.prsa-bg-glow{background:radial-gradient(60% 50% at 50% 30%, rgba(38,128,255,.10) 0%, transparent 62%);}
+.prsa-bg-grid{background-image:linear-gradient(rgba(0,0,0,.055) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(0,0,0,.055) 1px, transparent 1px);}
+.prsa-card{background:rgba(255,255,255,.65);border:1px solid rgba(0,0,0,.08);
+  box-shadow:0 1px 2px rgba(16,24,40,.06),0 24px 48px rgba(16,24,40,.10);}
+.prsa-brand{color:rgba(0,0,0,.55);}
+.prsa-title{color:#0b0c0f;}
+.prsa-clock{color:rgba(0,0,0,.45);}
+.prsa-error{color:#b91c1c;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);}
+}
 `;
