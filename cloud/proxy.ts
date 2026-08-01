@@ -6,6 +6,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { verifySession, SESSION_COOKIE } from "@/lib/auth/session";
 import { isOwnerEmail } from "@/lib/auth/owner";
+import { isNavigationRequest, nextDestFor } from "@/lib/auth/next";
 
 // /login and the whole /auth/* flow (start, callback, signout) must be reachable signed-out.
 // Segment match, not a bare prefix, so a future "/login-x" cannot become silently public.
@@ -53,9 +54,30 @@ export async function proxy(request: NextRequest) {
   if (isOwner && path === "/login") {
     return redirectTo("/");
   }
-  // Anyone without a valid owner session on a private route -> /login.
+  // Signed-out visitor to a private route: zero-click hub hop straight to /auth/start (carrying
+  // the original destination, basePath-prefixed, as next=) instead of stopping at a /login card
+  // requiring a manual click - the broker has no consent interstitial for this client, so a
+  // valid broker session + satisfied AAL lands the owner right back on /battcal/... where they
+  // started.
+  //
+  // Restricted to genuine top-level navigations (isNavigationRequest): a signed-out fetch()/XHR
+  // (this app's own client code, or a Next.js client-side <Link> soft-navigation fetching the
+  // RSC payload) must never be redirected into an OAuth hop mid-flight - it gets a clean 401
+  // instead. The /login card itself is untouched (PUBLIC_PREFIXES exempts it unconditionally),
+  // so a broken sign-in never auto-restarts into a loop; it always stops on a manual button.
   if (!isOwner && !isPublic) {
-    return redirectTo("/login");
+    if (!isNavigationRequest(request.headers)) {
+      return new NextResponse(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const u = request.nextUrl.clone();
+    const dest = nextDestFor(request.nextUrl.basePath, request.nextUrl.pathname, request.nextUrl.search);
+    u.pathname = "/auth/start";
+    u.search = "";
+    if (dest) u.searchParams.set("next", dest);
+    return NextResponse.redirect(u);
   }
   return NextResponse.next();
 }
