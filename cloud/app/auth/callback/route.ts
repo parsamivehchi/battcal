@@ -8,6 +8,7 @@ import { OIDC, oidcFor, verifyTx, verifyIdToken } from "@/lib/auth/oidc";
 import { signSession, SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/auth/session";
 import { isOwnerEmail } from "@/lib/auth/owner";
 import { onAuthEvent } from "@/lib/auth/hooks";
+import { sanitizeNext } from "@/lib/auth/next";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -88,9 +89,16 @@ export async function GET(request: Request) {
 
   void onAuthEvent("sign_in", { email });
   const token = await signSession({ sub, email: email! });
+  // Re-sanitize defensively: tx.next only ever reaches here via sanitizeNext at /auth/start, but
+  // this is the value that actually becomes a Location header, so a future caller of signTx that
+  // skips that step still cannot smuggle an open redirect through. A missing/unsafe next falls
+  // back to BASE exactly as before this change (the app root), never to /login - only
+  // backToLogin (above) ever sends the visitor there, and it never sets next=, so a broken
+  // sign-in can never auto-restart into a loop.
+  const dest = sanitizeNext(tx.next) ?? (BASE || "/");
   const res = new NextResponse(null, {
     status: 307,
-    headers: { Location: BASE || "/" },
+    headers: { Location: dest },
   });
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,

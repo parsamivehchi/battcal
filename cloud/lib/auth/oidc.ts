@@ -75,7 +75,13 @@ function txKey(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export type OidcTx = { verifier: string; state: string; nonce: string; iss?: string };
+// `next` is the sanitized post-login destination carried from proxy.ts's auto-start redirect
+// through /auth/start (see lib/auth/next.ts sanitizeNext) so /auth/callback can land the owner
+// back where they started instead of always falling back to the app root. Absent on a direct
+// /login -> "Sign in with SSO" click (no destination beyond the app itself) and on every
+// broker-side error return (the tx cookie for those was minted by the ORIGINAL /auth/start call,
+// which never received a next= worth carrying in an error scenario the login card handles).
+export type OidcTx = { verifier: string; state: string; nonce: string; iss?: string; next?: string };
 
 export async function signTx(tx: OidcTx): Promise<string> {
   return new SignJWT({ ...tx }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("10m").sign(txKey());
@@ -85,9 +91,9 @@ export async function verifyTx(token: string | undefined): Promise<OidcTx | null
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, txKey(), { algorithms: ["HS256"] });
-    const { verifier, state, nonce, iss } = payload as JWTPayload & Partial<OidcTx>;
+    const { verifier, state, nonce, iss, next } = payload as JWTPayload & Partial<OidcTx>;
     if (!verifier || !state || !nonce) return null;
-    return { verifier, state, nonce, iss };
+    return { verifier, state, nonce, iss, next: typeof next === "string" ? next : undefined };
   } catch {
     return null;
   }

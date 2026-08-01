@@ -5,8 +5,14 @@
 // Host-aware: the flow's endpoints derive from the apex that served this request (oidcFor), so a
 // pmcdn.me visitor's whole round trip stays on pmcdn.me. The chosen issuer rides in the signed
 // transaction cookie so /auth/callback redeems and verifies against the same apex.
+//
+// `next`: proxy.ts's auto-start redirect (and the /login card's manual button, unchanged) may
+// carry a `?next=` destination to land the owner back where they started after sign-in instead of
+// the app root. It is a public, unauthenticated query param, so sanitizeNext rejects anything that
+// is not a same-origin relative path before it is allowed into the signed tx cookie.
 import { type NextRequest, NextResponse } from "next/server";
 import { oidcFor, pkce, randToken, signTx } from "@/lib/auth/oidc";
+import { sanitizeNext } from "@/lib/auth/next";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +22,8 @@ export async function GET(req: NextRequest) {
   const { verifier, challenge } = pkce();
   const state = randToken();
   const nonce = randToken();
-  const tx = await signTx({ verifier, state, nonce, iss: flow.issuer });
+  const next = sanitizeNext(req.nextUrl.searchParams.get("next")) ?? undefined;
+  const tx = await signTx({ verifier, state, nonce, iss: flow.issuer, next });
 
   const u = new URL(flow.authorizeUrl);
   u.searchParams.set("client_id", flow.clientId);
