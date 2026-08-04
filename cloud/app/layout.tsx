@@ -10,9 +10,10 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
-// No-flash theme init: mirrors dashboard/src/kit/ThemeProvider exactly (LIGHT default,
-// localStorage 'battcal-theme', .dark class for the three dark themes).
-const themeInit = `(function(){try{var v=localStorage.getItem('battcal-theme');var t=['light','dark','midnight','forest','warm'].indexOf(v)>=0?v:'light';var d=['dark','midnight','forest'].indexOf(t)>=0;var e=document.documentElement;e.classList.toggle('dark',d);if(t==='light')e.removeAttribute('data-theme');else e.setAttribute('data-theme',t);}catch(e){}})();`;
+// No-flash theme init: mirrors dashboard/src/kit/ThemeProvider exactly (absent stored
+// preference resolves via prefers-color-scheme, localStorage 'battcal-theme' always
+// wins once set, .dark class for the three dark themes).
+const themeInit = `(function(){try{var v=localStorage.getItem('battcal-theme');var t=['light','dark','midnight','forest','warm'].indexOf(v)>=0?v:(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var d=['dark','midnight','forest'].indexOf(t)>=0;var e=document.documentElement;e.classList.toggle('dark',d);if(t==='light')e.removeAttribute('data-theme');else e.setAttribute('data-theme',t);}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

@@ -62,7 +62,7 @@ export function ThemeSwitcher({ openUp = false, align = 'right', className = '' 
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Theme: ${MODE_LABEL[mode]}`}
-        className="inline-flex items-center gap-1.5 rounded-md border border-input-border bg-form-bg px-2 py-1 text-xs text-text hover:bg-card-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-input-border bg-form-bg px-2 py-1 text-xs text-text hover:bg-card-hover transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <TriggerIcon className="w-4 h-4" aria-hidden />
         <span>{MODE_LABEL[mode]}</span>

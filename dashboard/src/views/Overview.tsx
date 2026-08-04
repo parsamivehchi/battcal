@@ -81,7 +81,7 @@ export function Overview() {
                 <button
                   type="button"
                   onClick={() => doControl('resume', 'Resume')}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
                   style={{ background: 'var(--accent)' }}
                 >
                   <Play size={13} /> Resume cycling
@@ -90,7 +90,7 @@ export function Overview() {
                 <button
                   type="button"
                   onClick={() => doControl('pause', 'Pause')}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
                   style={{ background: 'var(--accent)' }}
                 >
                   <Pause size={13} /> Charge full now
