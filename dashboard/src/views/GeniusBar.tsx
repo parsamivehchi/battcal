@@ -95,26 +95,28 @@ export function GeniusBar() {
         )}
 
         <h4 className="mt-5 text-[13px] font-semibold" style={{ color: 'var(--tx)' }}>Behavioral evidence (the lever that actually works)</h4>
-        <table className="mt-2 w-full border-collapse text-xs">
-          <tbody>
-            {[
-              ['Estimated runtime', ev?.runtime ? `~${ev.runtime.hours} h at ${ev.runtime.atWatts} W` : '--', ev?.runtime?.note ?? ''],
-              ['Internal resistance', ev?.resistanceMohm != null ? `${ev.resistanceMohm} mΩ` : '--',
-                ev?.resistanceElevated ? 'ELEVATED - a real "not functioning normally" signal' : 'within normal range'],
-              ['Possible unmonitored drops (>15%)', ev ? String(ev.shutdowns.length) : '--',
-                ev && ev.shutdowns.length
-                  ? ev.shutdowns.map((s) => `${s.dropPct}% drop from ${s.pct}% on ${s.at}`).join('; ') + ' (could also be sleeping on battery; shown for context, not asserted as a symptom)'
-                  : 'none detected'],
-              ['Battery temperature range', ev?.tempRange ? `${ev.tempRange.min}-${ev.tempRange.max} °C` : '--', 'normal operating range'],
-            ].map(([k, v, note]) => (
-              <tr key={k}>
-                <td className="border-b px-2 py-1.5 font-medium" style={{ ...cellBorder, color: 'var(--tx)' }}>{k}</td>
-                <td className="border-b px-2 py-1.5 tabular-nums" style={{ ...cellBorder, color: 'var(--tx)' }}>{v}</td>
-                <td className="border-b px-2 py-1.5" style={{ ...cellBorder, color: 'var(--tx-3)' }}>{note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="mt-2 w-full border-collapse text-xs">
+            <tbody>
+              {[
+                ['Estimated runtime', ev?.runtime ? `~${ev.runtime.hours} h at ${ev.runtime.atWatts} W` : '--', ev?.runtime?.note ?? ''],
+                ['Internal resistance', ev?.resistanceMohm != null ? `${ev.resistanceMohm} mΩ` : '--',
+                  ev?.resistanceElevated ? 'ELEVATED - a real "not functioning normally" signal' : 'within normal range'],
+                ['Possible unmonitored drops (>15%)', ev ? String(ev.shutdowns.length) : '--',
+                  ev && ev.shutdowns.length
+                    ? ev.shutdowns.map((s) => `${s.dropPct}% drop from ${s.pct}% on ${s.at}`).join('; ') + ' (could also be sleeping on battery; shown for context, not asserted as a symptom)'
+                    : 'none detected'],
+                ['Battery temperature range', ev?.tempRange ? `${ev.tempRange.min}-${ev.tempRange.max} °C` : '--', 'normal operating range'],
+              ].map(([k, v, note]) => (
+                <tr key={k}>
+                  <td className="border-b px-2 py-1.5 font-medium" style={{ ...cellBorder, color: 'var(--tx)' }}>{k}</td>
+                  <td className="border-b px-2 py-1.5 tabular-nums" style={{ ...cellBorder, color: 'var(--tx)' }}>{v}</td>
+                  <td className="border-b px-2 py-1.5" style={{ ...cellBorder, color: 'var(--tx-3)' }}>{note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         <div className="mt-4 rounded-lg border p-3 text-xs leading-relaxed"
           style={{
