@@ -7,10 +7,11 @@ import './kit/app.css';
 import App from './App';
 import { liveDataSource } from './data/data-source';
 
-// Resolve theme before first paint (mirrors kit/ThemeProvider exactly: LIGHT default).
-// Pre-rehaul the stored value could be 'auto'; migrate it once to the system-resolved theme.
+// Resolve theme before first paint (mirrors kit/ThemeProvider exactly: absent stored
+// preference resolves via prefers-color-scheme; an explicit stored choice always wins).
 const VALID = ['light', 'dark', 'midnight', 'forest', 'warm'];
-let pref = localStorage.getItem('battcal-theme') ?? 'light';
+const stored = localStorage.getItem('battcal-theme');
+let pref = stored ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 if (!VALID.includes(pref)) {
   pref = pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   localStorage.setItem('battcal-theme', pref);

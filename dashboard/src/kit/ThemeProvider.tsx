@@ -1,6 +1,7 @@
 // Vendored from aecom.engineering/packages/theme/src/ThemeProvider.tsx (via the
 // netstats copy). Standalone SPA variant: no 'use client', no cross-subdomain
-// cookie, no 'system' mode. LIGHT is the hard default. Persisted to localStorage
+// cookie. An absent stored preference resolves via prefers-color-scheme (SYSTEM
+// default); an explicit stored choice always wins. Persisted to localStorage
 // 'battcal-theme'. The token layer lives in kit/theme.css (5 themes).
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -22,6 +23,14 @@ function isValidMode(v: string | null | undefined): v is ThemeMode {
   return !!v && (THEME_MODES as string[]).includes(v);
 }
 
+function systemDefault(): ThemeMode {
+  try {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
 function readStoredMode(): ThemeMode {
   try {
     const ls = localStorage.getItem(STORAGE_KEY);
@@ -29,7 +38,7 @@ function readStoredMode(): ThemeMode {
   } catch {
     /* ignore */
   }
-  return 'light'; // LIGHT default, always.
+  return systemDefault(); // no stored choice -> resolve via prefers-color-scheme.
 }
 
 function writeStoredMode(mode: ThemeMode) {
