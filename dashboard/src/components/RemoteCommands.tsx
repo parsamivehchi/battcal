@@ -61,7 +61,7 @@ export function RemoteCommands() {
       type="button"
       disabled={busy}
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
+      className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
       style={{
         borderColor: 'var(--card-border)',
         background: 'var(--card)',

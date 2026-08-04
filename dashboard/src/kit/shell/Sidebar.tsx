@@ -174,7 +174,7 @@ export function Sidebar({
               type="submit"
               title="Sign out"
               aria-label="Sign out"
-              className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-card-hover"
+              className="flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-card-hover"
               style={{ color: 'var(--tx-3)' }}
             >
               <LogOut size={16} />
@@ -186,7 +186,7 @@ export function Sidebar({
           onClick={toggleCollapsed}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-card-hover"
+          className="flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-card-hover"
           style={{ color: 'var(--tx-3)' }}
         >
           {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}

@@ -182,7 +182,7 @@ export function Segmented<T extends string>({
             title={o.title}
             disabled={disabled}
             onClick={() => onChange(o.value)}
-            className="px-2.5 py-1.5 text-xs font-medium transition-colors"
+            className="min-h-9 px-2.5 py-1.5 text-xs font-medium transition-colors"
             style={{
               background: active ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'var(--card)',
               color: active ? 'var(--accent-dark)' : 'var(--tx-2)',
