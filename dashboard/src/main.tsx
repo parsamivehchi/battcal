@@ -11,11 +11,15 @@ import { liveDataSource } from './data/data-source';
 // preference resolves via prefers-color-scheme; an explicit stored choice always wins).
 const VALID = ['light', 'dark', 'midnight', 'forest', 'warm'];
 const stored = localStorage.getItem('battcal-theme');
-let pref = stored ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-if (!VALID.includes(pref)) {
-  pref = pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  localStorage.setItem('battcal-theme', pref);
-}
+// An absent OR unrecognized preference (including the legacy 'auto') resolves from the OS and is
+// deliberately NOT written back: persisting it would outrank the OS on every later visit, so a
+// user who flipped their Mac to dark would stay light forever. readStoredMode does the same.
+const pref =
+  stored && VALID.includes(stored)
+    ? stored
+    : window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
 document.documentElement.classList.toggle('dark', ['dark', 'midnight', 'forest'].includes(pref));
 if (pref === 'light') document.documentElement.removeAttribute('data-theme');
 else document.documentElement.setAttribute('data-theme', pref);
