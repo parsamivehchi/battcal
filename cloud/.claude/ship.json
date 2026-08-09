@@ -1,0 +1,46 @@
+{
+  "app": "mivehchi-dev-battcal",
+  "appDir": ".",
+  "vercelProject": "battcal",
+  "deployMode": "auto",
+  "domain": "https://mivehchi.dev",
+  "basePath": true,
+  "gate": {
+    "typecheck": "npm run typecheck",
+    "lint": null,
+    "build": "npm run build",
+    "leakCheck": null
+  },
+  "buildMarker": {
+    "type": "none"
+  },
+  "verify": {
+    "authChain": [
+      {
+        "route": "/battcal/auth/start",
+        "authorize": "https://prsa.me/oauth/authorize",
+        "clientId": "battcal",
+        "redirectUri": "https://mivehchi.dev/battcal/auth/callback"
+      }
+    ],
+    "failClosed": [
+      {
+        "route": "/battcal/auth/callback",
+        "location": "https://mivehchi.dev/battcal/login?error=missing_code"
+      }
+    ]
+  },
+  "clientGlobs": [
+    "src/**/*.tsx",
+    "app/**/*.tsx"
+  ],
+  "_meta": {
+    "shape": "oidc",
+    "mount": "/battcal",
+    "pageGateObservable": false,
+    "clientIdSource": "source",
+    "boundBy": "rewrite-destination-alias",
+    "viaRedirectFrom": null,
+    "verifiedAgainstLive": "2026-08-09"
+  }
+}
