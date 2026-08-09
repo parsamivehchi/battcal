@@ -1,6 +1,13 @@
 .DS_Store
 *.log
-.claude/
+# Session archives and scratch stay out, but ship.json is the deploy contract the
+# fleet auth-gate canary reads, so it is tracked. Re-including a file requires
+# excluding the DIRECTORY CONTENTS rather than the directory itself: git cannot
+# re-include anything under an excluded directory.
+.claude/*
+!.claude/ship.json
+cloud/.claude/*
+!cloud/.claude/ship.json
 
 node_modules/
 dashboard/dist/
