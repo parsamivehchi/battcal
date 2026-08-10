@@ -1,13 +1,14 @@
 // Vendored + adapted from aecom.engineering/packages/ui/src/ThemeSwitcher.tsx (via
-// netstats). LIGHT is the default; the five themes come from kit/theme.css. Utility
-// classes resolve from the @theme alias block in index.css.
+// netstats). SYSTEM is the default; the five concrete themes come from kit/theme.css.
+// Utility classes resolve from the @theme alias block in index.css.
 
 import { useState, useRef, useEffect, useId } from 'react';
-import { Sun, Moon, Sparkles, Trees, Coffee, Check } from 'lucide-react';
+import { Sun, Moon, Sparkles, Trees, Coffee, Check, Monitor } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useTheme, THEME_MODES, type ThemeMode } from '../ThemeProvider';
 
 const MODE_ICON: Record<ThemeMode, LucideIcon> = {
+  system: Monitor,
   light: Sun,
   dark: Moon,
   midnight: Sparkles,
@@ -16,6 +17,7 @@ const MODE_ICON: Record<ThemeMode, LucideIcon> = {
 };
 
 const MODE_LABEL: Record<ThemeMode, string> = {
+  system: 'System',
   light: 'Light',
   dark: 'Dark',
   midnight: 'Midnight',

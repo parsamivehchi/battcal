@@ -4,7 +4,7 @@
 // `signoutAction` (cloud mount only) shows the SSO sign-out button.
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { BatteryCharging, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { ArrowLeft, BatteryCharging, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { NAV_ITEMS, type ExternalNavItem } from '../../nav';
 import { ThemeSwitcher } from './ThemeSwitcher';
 
@@ -16,10 +16,12 @@ export function Sidebar({
   extras,
   signoutAction,
   externalNav,
+  hubUrl,
 }: {
   extras?: ReactNode;
   signoutAction?: string;
   externalNav?: ExternalNavItem[];
+  hubUrl?: string;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
@@ -160,6 +162,26 @@ export function Sidebar({
         </div>
       )}
       <div className="flex-1" />
+
+      {/* Back to hub (cloud mount only; plain anchor, never a NavLink - the SPA
+          catch-all would swallow it and bounce to /overview instead of leaving). */}
+      {hubUrl && (
+        <a
+          href={hubUrl}
+          title="Back to hub"
+          className="flex items-center gap-2.5 border-t px-3 py-2.5 text-[13px] font-medium transition-colors"
+          style={{ borderColor: 'var(--card-border)', color: 'var(--tx-2)', justifyContent: collapsed ? 'center' : 'flex-start' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'var(--card-hover)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+          }}
+        >
+          <ArrowLeft size={17} className="shrink-0" />
+          {!collapsed && <span>Back to hub</span>}
+        </a>
+      )}
 
       {/* Footer */}
       <div

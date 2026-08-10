@@ -12,5 +12,13 @@ const App = dynamic(() => import('../../dashboard/src/App'), { ssr: false });
 const source = cloudDataSource('/battcal');
 
 export default function DashboardClient() {
-  return <App source={source} basename="/battcal" signoutAction="/battcal/auth/signout" externalNav={CLOUD_EXTERNAL_NAV} />;
+  return (
+    <App
+      source={source}
+      basename="/battcal"
+      signoutAction="/battcal/auth/signout"
+      externalNav={CLOUD_EXTERNAL_NAV}
+      hubUrl="https://mivehchi.dev"
+    />
+  );
 }

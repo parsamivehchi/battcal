@@ -76,14 +76,16 @@ export interface AppProps {
   signoutAction?: string;
   // Host-owned pages outside this SPA's router (cloud mirror only).
   externalNav?: ExternalNavItem[];
+  // Link back to the platform hub (cloud mirror only); absent on the local dashboard.
+  hubUrl?: string;
 }
 
-export default function App({ source, basename, signoutAction, externalNav }: AppProps) {
+export default function App({ source, basename, signoutAction, externalNav, hubUrl }: AppProps) {
   return (
     <ThemeProvider>
       <DataProvider source={source}>
         <BrowserRouter basename={basename}>
-          <AppShell sidebarExtras={<SidebarStatus />} signoutAction={signoutAction} externalNav={externalNav}>
+          <AppShell sidebarExtras={<SidebarStatus />} signoutAction={signoutAction} externalNav={externalNav} hubUrl={hubUrl}>
             <GlobalNotices />
             <Routes>
               <Route path="/overview" element={<Overview />} />
