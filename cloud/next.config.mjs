@@ -21,6 +21,10 @@ const nextConfig = {
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'Referrer-Policy', value: 'no-referrer' },
         { key: 'X-Frame-Options', value: 'DENY' },
+        // Build marker for deploy verification (ship.mjs checkBuildMarker): the 7-char sha of
+        // the commit this deployment was built from. It rides every response including the
+        // /auth/* redirects, the only routes node fetch can reach through the WAF challenge.
+        { key: 'x-build', value: (process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev').slice(0, 7) },
       ],
     }];
   },
