@@ -44,15 +44,17 @@ export function AppShell({
   sidebarExtras,
   signoutAction,
   externalNav,
+  hubUrl,
 }: {
   children: ReactNode;
   sidebarExtras?: ReactNode;
   signoutAction?: string;
   externalNav?: ExternalNavItem[];
+  hubUrl?: string;
 }) {
   return (
     <div className="flex" style={{ background: 'var(--bg)', minHeight: '100vh' }}>
-      <Sidebar extras={sidebarExtras} signoutAction={signoutAction} externalNav={externalNav} />
+      <Sidebar extras={sidebarExtras} signoutAction={signoutAction} externalNav={externalNav} hubUrl={hubUrl} />
       <div className="flex min-w-0 flex-1 flex-col" style={{ height: '100vh' }}>
         <main id="bc-main" className="scrollbar-slim flex-1 overflow-y-auto">
           <ScrollManager />

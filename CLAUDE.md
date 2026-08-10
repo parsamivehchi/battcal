@@ -131,5 +131,6 @@ truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
 
 Dashboard colors are the dataviz-skill validated palette (light + dark steps in
 `dashboard/src/index.css`); axis helpers in `dashboard/src/chartUtils.ts` (round
-wall-clock time ticks, padded stepped Y scales). Theme: Auto (system) / Light / Dark.
+wall-clock time ticks, padded stepped Y scales). Theme: System (default) / Light / Dark /
+Midnight / Forest / Warm.
 No em dashes anywhere. Named local URL: https://battcal.localhost (portless alias -> 4437).

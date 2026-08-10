@@ -5,6 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BattCal</title>
     <meta name="description" content="Battery calibration dashboard" />
+    <!-- No-flash theme init: mirrors src/kit/ThemeProvider exactly (absent OR 'system'
+         stored preference resolves via prefers-color-scheme every load, any other
+         explicit localStorage 'battcal-theme' choice always wins, .dark class for the
+         three dark themes). Keep this in lockstep with ThemeProvider.tsx and
+         cloud/app/layout.tsx's themeInit. -->
+    <script>
+      (function () {
+        try {
+          var v = localStorage.getItem('battcal-theme');
+          var names = ['light', 'dark', 'midnight', 'forest', 'warm'];
+          var t =
+            !v || v === 'system' || names.indexOf(v) < 0
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : v;
+          var d = ['dark', 'midnight', 'forest'].indexOf(t) >= 0;
+          var e = document.documentElement;
+          e.classList.toggle('dark', d);
+          if (t === 'light') e.removeAttribute('data-theme');
+          else e.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
