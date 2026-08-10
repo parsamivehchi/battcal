@@ -12,7 +12,9 @@
     "leakCheck": null
   },
   "buildMarker": {
-    "type": "none"
+    "type": "header",
+    "name": "x-build",
+    "route": "/battcal/auth/callback"
   },
   "verify": {
     "authChain": [
