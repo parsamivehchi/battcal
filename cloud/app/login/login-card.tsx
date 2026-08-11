@@ -3,11 +3,14 @@
 // The sign-in card. Fully self-contained (inline <style>, no Tailwind, no @prsa/ui) so it renders
 // identically in every host app regardless of that app's CSS.
 //
-// Visual identity: matches the prsa.me hub login (glass card, quiet glow, one accent) and FOLLOWS
-// THE SYSTEM COLOUR SCHEME (owner directive 2026-07-31: login surfaces must match the OS setting,
-// never blind a dark room) - dark glass is the base, with a prefers-color-scheme:light override
-// block; pure CSS, no theme toggle and no theme boot script here. Values mirror @prsa/theme's
-// --glass-* tokens, inlined because this card cannot import workspace packages.
+// Visual identity: matches the prsa.me hub login's P2 redesign (2026-08-11) - a fixed dark glass
+// card with the platform's own emerald accent (#00AB61, replacing the old generic blue #2680ff).
+// Login pages COMMIT to this dark look rather than following the platform's five stored themes -
+// a deliberate, owner-authorized exception (superseding the 2026-07-31 "match the OS setting"
+// directive this card used to follow; see the hub's page.tsx LOGIN_PALETTE comment for the full
+// rationale). No `prefers-color-scheme` override block any more, no theme toggle, no theme boot
+// script - pre-auth chrome, not a themed app surface. Values otherwise still mirror @prsa/theme's
+// --glass-* token shapes, inlined because this card cannot import workspace packages.
 //
 // Client component on purpose:
 //   - Behind a path rewrite (mivehchi.net/investments -> investments-*.vercel.app) the SERVER sees the
@@ -84,14 +87,19 @@ export function LoginCard({ authStart, error }: { authStart: string; error: stri
   );
 }
 
-// Mirrors @prsa/theme --glass-* values (glass surface/border/accent) so the RP gate reads as the
-// same surface as the hub login form.
+// P2 (2026-08-11): emerald accent (#00AB61, the platform's own accent - matches the hub login's
+// LoginMesh) replacing the old generic blue (#2680ff); no prefers-color-scheme block any more -
+// this card commits to the dark look unconditionally, same as the hub. Class names kept
+// unchanged (prsa-*) even though they no longer namespace via data-prsa-* the way a mounted
+// React tree would - this card has no wrapper element to stamp an attribute on other than the
+// classes themselves, and it was never colliding with a host app's own `data-theme` in the first
+// place (pure class selectors, no attribute selector here to collide).
 const CSS = `
 .prsa-login{position:fixed;inset:0;display:grid;place-items:center;padding:24px;overflow:auto;
   font-family:var(--font-geist, 'Geist'),-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   background:#08090c;color:#fafafa;color-scheme:dark;-webkit-font-smoothing:antialiased;}
 .prsa-bg-glow{position:absolute;inset:0;pointer-events:none;
-  background:radial-gradient(60% 50% at 50% 30%, rgba(38,128,255,.14) 0%, transparent 62%);}
+  background:radial-gradient(60% 50% at 50% 30%, rgba(0,171,97,.14) 0%, transparent 62%);}
 .prsa-bg-grid{position:absolute;inset:0;pointer-events:none;opacity:.35;
   background-image:linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px);
@@ -112,22 +120,10 @@ const CSS = `
   font-variant-numeric:tabular-nums;}
 .prsa-error{margin-top:4px;font-size:13px;color:#fca5a5;background:rgba(239,68,68,.10);
   border:1px solid rgba(239,68,68,.30);border-radius:8px;padding:9px 11px;}
-.prsa-btn{margin-top:10px;background:#2680ff;color:#fff;border:none;border-radius:10px;
+.prsa-btn{margin-top:10px;background:#00AB61;color:#04150e;border:none;border-radius:10px;
   padding:11px 14px;font-weight:600;font-size:14px;text-align:center;text-decoration:none;
   cursor:pointer;transition:background .15s ease;}
-.prsa-btn:hover{background:#4d96ff;}
-.prsa-btn:focus-visible{outline:2px solid rgba(38,128,255,.6);outline-offset:2px;}
+.prsa-btn:hover{background:#00c470;}
+.prsa-btn:focus-visible{outline:2px solid rgba(0,171,97,.6);outline-offset:2px;}
 @media (prefers-reduced-motion:reduce){.prsa-btn{transition:none;}}
-@media (prefers-color-scheme: light){
-.prsa-login{background:#f4f5f8;color:#16181d;color-scheme:light;}
-.prsa-bg-glow{background:radial-gradient(60% 50% at 50% 30%, rgba(38,128,255,.10) 0%, transparent 62%);}
-.prsa-bg-grid{background-image:linear-gradient(rgba(0,0,0,.055) 1px, transparent 1px),
-  linear-gradient(90deg, rgba(0,0,0,.055) 1px, transparent 1px);}
-.prsa-card{background:rgba(255,255,255,.65);border:1px solid rgba(0,0,0,.08);
-  box-shadow:0 1px 2px rgba(16,24,40,.06),0 24px 48px rgba(16,24,40,.10);}
-.prsa-brand{color:rgba(0,0,0,.55);}
-.prsa-title{color:#0b0c0f;}
-.prsa-clock{color:rgba(0,0,0,.45);}
-.prsa-error{color:#b91c1c;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);}
-}
 `;
