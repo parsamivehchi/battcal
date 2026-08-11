@@ -99,7 +99,17 @@ export async function verifyTx(token: string | undefined): Promise<OidcTx | null
   }
 }
 
-export type IdClaims = { sub: string; email?: string; name?: string; amr?: string[] };
+export type IdClaims = {
+  sub: string;
+  email?: string;
+  name?: string;
+  amr?: string[];
+  /** P1 (2026-08-11): whether the owner checked "Remember for 30 days" on the broker's login
+   *  page. Custom, non-standard-OIDC claim - drives this RP's own session cookie's Max-Age (see
+   *  session.ts + auth/callback/route.ts) instead of every RP hard-coding a fixed duration.
+   *  Absent/falsy is always treated as false, never assumed true - see the default below. */
+  persist?: boolean;
+};
 
 // Verifies the RS256 id_token against the broker's JWKS (signature, issuer, audience) and the
 // nonce. `issuer` is the flow's issuer from the transaction cookie; defaults to the env pin.
@@ -111,5 +121,6 @@ export async function verifyIdToken(idToken: string, nonce: string, issuer: stri
     email: payload.email as string | undefined,
     name: payload.name as string | undefined,
     amr: payload.amr as string[] | undefined,
+    persist: payload.persist === true,
   };
 }
