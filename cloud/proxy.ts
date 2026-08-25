@@ -4,7 +4,7 @@
 // minted by /auth/callback. Fail closed: no/invalid session -> /login.
 // Shape copied from the netstats reference (the basePath deviations are load-bearing).
 import { type NextRequest, NextResponse } from "next/server";
-import { verifySession, SESSION_COOKIE } from "@/lib/auth/session";
+import { verifySession, SESSION_COOKIE, signSession, idleMs, SESSION_REFRESH_MS, PERSIST_MAX_AGE } from "@/lib/auth/session";
 import { isOwnerEmail } from "@/lib/auth/owner";
 import { isNavigationRequest, nextDestFor } from "@/lib/auth/next";
 
@@ -79,6 +79,59 @@ export async function proxy(request: NextRequest) {
     if (dest) u.searchParams.set("next", dest);
     return NextResponse.redirect(u);
   }
+  // IDLE LOCK + SLIDING WINDOW (owner decision 2026-08-23, applied to the external fleet
+  // 2026-08-24). This app received the new session library in the same round - PERSIST_MAX_AGE,
+  // idleMs(), SESSION_REFRESH_MS and the `las` claim all landed in lib/auth/session.ts - but
+  // scripts/sync-rp-auth.mjs gates proxy.ts to in-repo apps only, so NOTHING here ever called any
+  // of it. The result was a session with the exports of a sliding one and the behaviour of a fixed
+  // one: 30 days from the moment of sign-in regardless of use, then a hard re-login, and no idle
+  // lock at all. That last part matters most - always-persist was justified BY the idle lock as its
+  // compensating control, and this app had the persist without the control.
+  //
+  // The redirect below is built exactly the way this file's own signed-out branch builds it, on
+  // purpose: that construction is already proven correct for this app's basePath and mount, and a
+  // second, subtly different one is how a redirect silently escapes the app.
+  if (session && isOwner && !isPublic) {
+    const now = Date.now();
+    if (now - session.lastSeen * 1000 > idleMs()) {
+      // Locked. A top-level navigation re-auths through the zero-click broker hop: an active
+      // broker seat resolves silently, an idle one costs one passkey tap - either way `next`
+      // lands the owner back HERE. A background fetch gets 423 so client code can tell locked
+      // from signed-out (the shared SessionLockBanner in @prsa/ui reads exactly this).
+      if (!isNavigationRequest(request.headers)) {
+        return new NextResponse(JSON.stringify({ error: "locked" }), {
+          status: 423,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const u = request.nextUrl.clone();
+      const dest = nextDestFor(request.nextUrl.basePath, request.nextUrl.pathname, request.nextUrl.search);
+      u.pathname = "/auth/start";
+      u.search = "";
+      if (dest) u.searchParams.set("next", dest);
+      return NextResponse.redirect(u);
+    }
+    // Active: slide. Re-mint with a fresh `las` and a full window, throttled off the token's own
+    // iat so this costs one Set-Cookie every few minutes rather than a signature per request.
+    // Legacy sub-less tokens (iat 0) are skipped rather than re-minted.
+    if (session.iat > 0 && now - session.iat * 1000 > SESSION_REFRESH_MS) {
+      const res = NextResponse.next();
+      try {
+        const token = await signSession({ sub: session.sub, email: session.email }, true);
+        res.cookies.set(SESSION_COOKIE, token, {
+          httpOnly: true,
+          secure: true,
+          sameSite: "lax",
+          path: "/",
+          maxAge: PERSIST_MAX_AGE,
+        });
+      } catch {
+        // A failed re-mint must never break the request - the existing cookie still has life.
+      }
+      return res;
+    }
+  }
+
   return NextResponse.next();
 }
 
