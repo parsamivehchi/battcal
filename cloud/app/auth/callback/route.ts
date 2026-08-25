@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { OIDC, oidcFor, verifyTx, verifyIdToken } from "@/lib/auth/oidc";
-import { signSession, SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/auth/session";
+import { signSession, SESSION_COOKIE, ONE_TIME_MAX_AGE, PERSIST_MAX_AGE } from "@/lib/auth/session";
 import { isOwnerEmail } from "@/lib/auth/owner";
 import { onAuthEvent } from "@/lib/auth/hooks";
 import { sanitizeNext } from "@/lib/auth/next";
@@ -74,10 +74,15 @@ export async function GET(request: Request) {
 
   let email: string | undefined;
   let sub: string;
+  let persist = false;
   try {
     const claims = await verifyIdToken(idToken, tx.nonce, flow.issuer);
     email = claims.email;
     sub = claims.sub;
+    // P1 (2026-08-11): the broker's own "Remember for 30 days" choice, not re-decided here -
+    // see @prsa/auth/persist.ts (broker) and lib/auth/session.ts (this RP's own cookie Max-Age,
+    // which this claim now drives instead of a fixed per-app constant).
+    persist = claims.persist === true;
   } catch {
     return backToLogin("bad_id_token");
   }
@@ -88,7 +93,7 @@ export async function GET(request: Request) {
   }
 
   void onAuthEvent("sign_in", { email });
-  const token = await signSession({ sub, email: email! });
+  const token = await signSession({ sub, email: email! }, persist);
   // Re-sanitize defensively: tx.next only ever reaches here via sanitizeNext at /auth/start, but
   // this is the value that actually becomes a Location header, so a future caller of signTx that
   // skips that step still cannot smuggle an open redirect through. A missing/unsafe next falls
@@ -100,12 +105,15 @@ export async function GET(request: Request) {
     status: 307,
     headers: { Location: dest },
   });
+  // The cookie's own Max-Age must never outlive the JWT it carries (signSession already picked
+  // ONE_TIME_MAX_AGE or PERSIST_MAX_AGE from the same `persist` flag) - keep both in lockstep by
+  // deriving this from the identical boolean rather than a second computation.
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: true,
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_MAX_AGE,
+    maxAge: persist ? PERSIST_MAX_AGE : ONE_TIME_MAX_AGE,
   });
   res.cookies.delete("battcal_oidc_tx");
   return res;
