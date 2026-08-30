@@ -22,6 +22,8 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import { useEffect, useState } from "react";
 
+import { LoginMesh } from "./login-mesh";
+
 // Self-contained font load: this card renders identically in every host app regardless of that
 // app's own typeface, so it binds its own Geist pair the same way the prsa.me hub login does.
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
@@ -111,6 +113,12 @@ export function LoginCard({ authStart, error }: { authStart: string; error: stri
     <main className={`prsa-login ${geist.variable} ${geistMono.variable}`}>
       <style>{CSS}</style>
 
+      {/* The fleet-wide constellation mesh (canonical: login-mesh.tsx in this same dir), mounted
+          BEHIND the existing glow + grid, which stay. Its wrapper and the canvas itself are both
+          pointer-events:none - the sign-in button must always win the click. */}
+      <div className="prsa-mesh" aria-hidden="true">
+        <LoginMesh />
+      </div>
       <div className="prsa-bg-glow" aria-hidden="true" />
       <div className="prsa-bg-grid" aria-hidden="true" />
 
@@ -168,6 +176,7 @@ html.dark .prsa-login{
   --lp-err:#fca5a5;--lp-err-bg:rgba(239,68,68,.10);--lp-err-border:rgba(239,68,68,.30);
   --lp-shadow:0 1px 2px rgba(0,0,0,.4),0 24px 48px rgba(0,0,0,.45);
   color-scheme:dark;}
+.prsa-mesh{position:absolute;inset:0;pointer-events:none;}
 .prsa-bg-glow{position:absolute;inset:0;pointer-events:none;
   background:radial-gradient(60% 50% at 50% 30%, rgba(0,171,97,.14) 0%, transparent 62%);}
 .prsa-bg-grid{position:absolute;inset:0;pointer-events:none;opacity:.35;
