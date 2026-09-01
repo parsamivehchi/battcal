@@ -4,9 +4,24 @@
 // turbopack.root points at the REPO root because the app imports the shared SPA from
 // ../dashboard/src (npm workspace hoists one React for both).
 /** @type {import('next').NextConfig} */
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const __dir = dirname(fileURLToPath(import.meta.url));
+
+// Build marker for deploy verification (ship.mjs checkBuildMarker / deploy-verification):
+// the 7-char sha of the commit this deployment was built from. Vercel injects
+// VERCEL_GIT_COMMIT_SHA; the Cloudflare Worker build (no such env) sets BUILD_SHA or falls
+// through to reading the repo directly; a bare local build with neither reads "dev".
+const buildSha = (() => {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  if (process.env.BUILD_SHA) return process.env.BUILD_SHA.slice(0, 7);
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: __dir, encoding: 'utf8' }).trim();
+  } catch {
+    return 'dev';
+  }
+})();
 
 const nextConfig = {
   turbopack: { root: join(__dir, '..') },
@@ -21,10 +36,9 @@ const nextConfig = {
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'Referrer-Policy', value: 'no-referrer' },
         { key: 'X-Frame-Options', value: 'DENY' },
-        // Build marker for deploy verification (ship.mjs checkBuildMarker): the 7-char sha of
-        // the commit this deployment was built from. It rides every response including the
-        // /auth/* redirects, the only routes node fetch can reach through the WAF challenge.
-        { key: 'x-build', value: (process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev').slice(0, 7) },
+        // Rides every response including the /auth/* redirects, the only routes node fetch
+        // can reach through the WAF challenge.
+        { key: 'x-build', value: buildSha },
       ],
     }];
   },
