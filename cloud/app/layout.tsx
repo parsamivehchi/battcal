@@ -1,8 +1,14 @@
-import '@fontsource-variable/dm-sans';
-import '@fontsource/ibm-plex-mono/400.css';
-import '@fontsource/ibm-plex-mono/600.css';
+import { Geist, Geist_Mono } from 'next/font/google';
 import '../../dashboard/src/kit/app.css';
 import type { ReactNode } from 'react';
+
+// Same Geist pair the generated login card (app/login/login-card.tsx) binds for itself,
+// bound here for the rest of the app so both surfaces read the SAME --font-geist /
+// --font-geist-mono tokens the shared kit css (dashboard/src/kit/app.css --font-sans /
+// --font-mono) falls through to. Fleet font sweep 2026-09-02 (fleet audit finding 3.5),
+// replacing the retired DM Sans / IBM Plex Mono fontsource imports.
+const geist = Geist({ subsets: ['latin'], variable: '--font-geist', display: 'swap' });
+const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', display: 'swap' });
 
 export const metadata = {
   title: 'BattCal',
@@ -25,7 +31,7 @@ const themeInit = `(function(){try{var v=localStorage.getItem('pm-theme');var na
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${geist.variable} ${geistMono.variable}`}>
       <head>
         {/* eslint-disable-next-line react/no-danger */}
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />

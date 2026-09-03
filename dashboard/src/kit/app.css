@@ -33,8 +33,14 @@
   --color-form-bg: var(--form-bg);
   --color-input-border: var(--input-border);
 
-  --font-sans: 'DM Sans Variable', 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+  /* Geist family (fleet standard, 2026-09-02). --font-geist / --font-geist-mono are bound by
+     the cloud/ Next app's root layout via next/font (mirrors login-card.tsx's own binding);
+     the Vite dashboard has no next/font, so the fallback resolves to the fontsource-loaded
+     'Geist Variable' / 'Geist Mono Variable' families instead (see main.tsx imports). Never
+     collapse this to a bare var() - an unbound var() with no fallback invalidates the whole
+     font-family declaration and the UI silently lands on Times. */
+  --font-sans: var(--font-geist, 'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif);
+  --font-mono: var(--font-geist-mono, 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace);
 }
 
 /* Per-app brand accent: battcal green (charge). Brighter in the dark themes so the
