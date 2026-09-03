@@ -1,4 +1,12 @@
-// Edge middleware (Next 16 renamed middleware.ts -> proxy.ts, export `proxy`). First of the auth
+// Edge middleware, kept as middleware.ts rather than Next 16's newer proxy.ts convention every
+// other in-repo RP ships (templates/relying-party/src/proxy.ts). PILOT (2026-09-01) for a
+// Cloudflare Workers build via OpenNext: proxy.ts is nodejs-runtime only and cannot be switched,
+// so OpenNext routes it through Node.js-middleware support the build itself warns is
+// experimental and unmaintained. middleware.ts keeps the mature edge-runtime path OpenNext has
+// supported since inception - see domains/mivehchi.space/src/middleware.ts for the same choice.
+// Do NOT add `runtime: "edge"` below: it is this file's documented default, and an explicit
+// value trips a known "edge" vs "experimental-edge" enum mismatch between Next and the adapter.
+// First of the auth
 // layers: gate every non-public route on a valid owner-session cookie. Identity and MFA are
 // delegated to prsa.me (the OIDC identity provider); this only verifies the short HS256 session
 // minted by /auth/callback. Fail closed: no/invalid session -> /login.
@@ -25,7 +33,7 @@ const CANONICAL_HOST = "mivehchi.dev";
 const isLocalHost = (h: string) =>
   h.startsWith("localhost") || h.endsWith(".localhost") || h.startsWith("127.");
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   if (devUngated()) return NextResponse.next();
   const host = request.headers.get("x-forwarded-host") ?? request.nextUrl.host;
   if (host !== CANONICAL_HOST && !isLocalHost(host)) {
