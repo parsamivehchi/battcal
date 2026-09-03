@@ -22,7 +22,7 @@ export default function NotFound() {
         <Link
           href="/"
           className="mt-4 inline-flex min-h-9 items-center rounded-md px-3 text-sm font-medium"
-          style={{ background: 'var(--accent)', color: '#ffffff' }}
+          style={{ background: 'var(--accent)', color: 'var(--accent-foreground, #ffffff)' }}
         >
           Back to BattCal
         </Link>
