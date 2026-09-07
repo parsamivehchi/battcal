@@ -27,7 +27,17 @@ const isLocalHost = (h: string) =>
 
 export async function proxy(request: NextRequest) {
   if (devUngated()) return NextResponse.next();
-  const host = request.headers.get("x-forwarded-host") ?? request.nextUrl.host;
+  // x-cf-mount-host: set by a Cloudflare router Worker (mivehchi-dev-mounts) that proxies this
+  // app's path mount to its Vercel deployment while the mivehchi.dev apex is served from
+  // Cloudflare. Through the Vercel apex rewrite the header is absent and x-forwarded-host is the
+  // original apex; through a Worker fetch Vercel overwrites x-forwarded-host with its plumbing
+  // host, so without this precedence the guard below would 308 to canonical and loop. Same
+  // contract as prsa.me's templates/relying-party/src/proxy.ts (2026-09-07). Custom headers pass
+  // through Vercel untouched.
+  const host =
+    request.headers.get("x-cf-mount-host") ??
+    request.headers.get("x-forwarded-host") ??
+    request.nextUrl.host;
   if (host !== CANONICAL_HOST && !isLocalHost(host)) {
     const u = request.nextUrl.clone();
     u.protocol = "https:";
