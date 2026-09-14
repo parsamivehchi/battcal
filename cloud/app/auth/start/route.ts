@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
   u.searchParams.set("code_challenge_method", "S256");
 
   const res = NextResponse.redirect(u);
+  res.headers.set("Cache-Control", "private, no-store"); // sets a signed PKCE tx cookie; must never be cached at any edge
   res.cookies.set("battcal_oidc_tx", tx, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 600 });
   return res;
 }
