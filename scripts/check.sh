@@ -16,8 +16,10 @@ done
 # (b) server syntax
 if node --check "$REPO/server/server.mjs" >/dev/null 2>&1; then pass "node --check server/server.mjs"; else fail "node --check server/server.mjs"; fi
 
-# (c) dashboard typecheck (skipped with a FAIL if node_modules is missing)
-if [ -d "$REPO/dashboard/node_modules" ]; then
+# (c) dashboard typecheck (skipped with a FAIL if its deps are missing). npm workspaces
+# HOIST deps to the repo root, so dashboard/node_modules legitimately does not exist in a
+# workspace install; key on the resolvable compiler, not the per-workspace directory.
+if [ -d "$REPO/dashboard/node_modules" ] || [ -d "$REPO/node_modules/typescript" ]; then
   if (cd "$REPO/dashboard" && npx tsc --noEmit >/dev/null 2>&1); then pass "tsc --noEmit dashboard"; else fail "tsc --noEmit dashboard"; fi
 else
   fail "dashboard/node_modules missing (cd dashboard && npm install)"

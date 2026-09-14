@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   const backToLogin = (reason: string) => {
     const res = new NextResponse(null, {
       status: 307,
-      headers: { Location: `${BASE}/login?error=${encodeURIComponent(reason)}` },
+      headers: { Location: `${BASE}/login?error=${encodeURIComponent(reason)}`, "Cache-Control": "private, no-store" },
     });
     res.cookies.delete("battcal_oidc_tx");
     return res;
@@ -103,7 +103,7 @@ export async function GET(request: Request) {
   const dest = sanitizeNext(tx.next) ?? (BASE || "/");
   const res = new NextResponse(null, {
     status: 307,
-    headers: { Location: dest },
+    headers: { Location: dest, "Cache-Control": "private, no-store" },
   });
   // The cookie's own Max-Age must never outlive the JWT it carries (signSession already picked
   // ONE_TIME_MAX_AGE or PERSIST_MAX_AGE from the same `persist` flag) - keep both in lockstep by
