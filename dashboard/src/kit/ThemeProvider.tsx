@@ -3,7 +3,13 @@
 // cookie. An absent stored preference resolves via prefers-color-scheme (SYSTEM
 // default); an explicit stored choice always wins, including an explicit 'system'
 // choice, which keeps following the OS scheme live. Persisted to localStorage
-// 'battcal-theme'. The token layer lives in kit/theme.css (5 themes).
+// 'pm-theme' - the SAME key the generated login card writes (external-fleet lineage;
+// prsa.me's sync-rp-login.mjs substitutes 'pm-theme' for out-of-monorepo apps like this
+// one), so a theme picked at sign-in carries straight into the app. Was 'battcal-theme'
+// until 2026-09-02, which silently dropped every sign-in theme choice (fleet audit
+// 2026-09-02, finding battcal-repo-1) - keep this key in lockstep with
+// cloud/app/layout.tsx's themeInit script and dashboard/src/main.tsx's no-flash init.
+// The token layer lives in kit/theme.css (5 themes).
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
@@ -14,7 +20,7 @@ export type ThemeMode = 'system' | ThemeName;
 
 export const THEME_MODES: ThemeMode[] = ['system', 'light', 'dark', 'midnight', 'forest', 'warm'];
 
-const STORAGE_KEY = 'battcal-theme';
+const STORAGE_KEY = 'pm-theme';
 const DARKISH: ThemeName[] = ['dark', 'midnight', 'forest'];
 
 export function isDarkTheme(t: ThemeName): boolean {

@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "battcal-mivehchi",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-01",
+  // nodejs_compat supplies node:crypto (randomBytes / createHash) to the OIDC route handlers
+  // and jose's JWT verify, which OpenNext bundles as NEXT_RUNTIME=nodejs inside workerd.
+  // global_fetch_strictly_public matches mivehchi.space/mivehchi.app - outbound fetch (prsa.me
+  // JWKS + token exchange, the Supabase read routes) resolves publicly rather than looping
+  // back into this Worker.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // UNROUTED on purpose (this deploy, per the task): no routes/zone keys, so the build lives
+  // only at the workers.dev-disabled default host until an owner attaches a real route.
+  "workers_dev": false,
+  "preview_urls": false,
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "battcal-mivehchi"
+    }
+  ],
+  // No kv_namespaces / incremental cache: every route sits behind the owner gate and is
+  // dynamic, same reasoning as mivehchi.space. See open-next.config.ts.
+  //
+  // Non-secret configuration only. Before any route attach this worker needs (wrangler secret
+  // put, once per name): SESSION_SECRET, PRSA_OIDC_CLIENT_SECRET, BATTCAL_SUPABASE_URL,
+  // BATTCAL_SUPABASE_SERVICE_KEY. None of the four are provisioned by this deploy.
+  "vars": {
+    "PRSA_OIDC_ISSUER": "https://prsa.me",
+    "PRSA_OIDC_CLIENT_ID": "battcal",
+    "PRSA_OIDC_REDIRECT_URI": "https://mivehchi.dev/battcal/auth/callback",
+    "OWNER_EMAILS": "parsa@mivehchi.net"
+  }
+}

@@ -22,3 +22,7 @@ cloud/.vercel/
 !.env.example
 progress/
 site/dist/
+
+# cloud (Cloudflare Worker build output)
+cloud/.open-next/
+cloud/.wrangler/
