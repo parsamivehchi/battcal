@@ -150,7 +150,9 @@ deploy_serverdash() {
     say "  [dry] cp server/server.mjs -> $APP_DIR/server/ ; rsync dashboard/dist/ -> $APP_DIR/dashboard/dist/ ; kickstart $DASH_LABEL"
     return 0
   fi
-  if ! ( cd "$REPO/dashboard" && { [ -d node_modules ] || npm install; } && npm run build ); then fail "dashboard build failed"; return 0; fi
+  # npm workspaces hoist deps to the repo root, so dashboard/node_modules is absent in a
+  # normal install; probe a hoisted dep too, or every deploy re-runs a pointless npm install.
+  if ! ( cd "$REPO/dashboard" && { [ -d node_modules ] || [ -d "$REPO/node_modules/vite" ] || npm install; } && npm run build ); then fail "dashboard build failed"; return 0; fi
   mkdir -p "$APP_DIR/server" "$APP_DIR/dashboard/dist"
   cp "$REPO/server/server.mjs" "$APP_DIR/server/server.mjs"
   rsync -a --delete "$REPO/dashboard/dist/" "$APP_DIR/dashboard/dist/"
