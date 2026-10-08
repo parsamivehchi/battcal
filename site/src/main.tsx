@@ -1,10 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { inject } from '@vercel/analytics';
 import './index.css';
 import App from './App';
-
-inject();
 
 // NOTE: no BotID client here on purpose. The page is served through the mivehchi.app
 // proxy where BotID's beacon paths do not exist, and its fetch interception then makes
