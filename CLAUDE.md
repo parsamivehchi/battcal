@@ -1,136 +1,54 @@
-# battcal
+# battcal - battery band cycler for Apple Silicon MacBooks
 
-Battery band cycler for Apple Silicon MacBooks. Cycles the battery inside a band
-(longevity 10-90% default, calibration 5-100% on demand) while plugged in, so the
-cells never park at 100%. Ships an engine (bash LaunchAgent), a zero-dependency
-Node dashboard server + Vite/React dashboard, a native SwiftUI menu bar app, a
-SwiftBar plugin alternative, and an optional hosted read-only mirror (Next.js +
-Supabase, deployed behind SSO), and a public product page (`site/`, mivehchi.app/battcal).
-Public repo (PolyForm Noncommercial 1.0.0 since v1.3.0; earlier releases MIT):
-https://github.com/parsamivehchi/battcal
+## What it is
+Cycles the battery inside a band (longevity 10-90% default, calibration 5-100% on demand) while plugged in, so cells never park at 100%. Surfaces: bash LaunchAgent engine, zero-dep Node server + Vite/React dashboard, SwiftUI menu bar app, SwiftBar plugin, optional hosted read-only mirror (`cloud/`, Next 16 shipped via OpenNext), public product page (`site/`, mivehchi.app/battcal). Public repo (PolyForm Noncommercial 1.0.0 since v1.3.0; earlier releases MIT): https://github.com/parsamivehchi/battcal
 
-## Layout
+## Current state (as of 2026-10-22)
+- Latest tag v1.3.0. Newest progress entry: `progress/2026-08-26_053451_W6_battcalbar-on-demand-no-background-activity`. Open threads and failures: `.claude/STATE.md`.
+- `cloud/` has `wrangler.jsonc` (Worker `battcal-mivehchi`, @opennextjs/cloudflare) and no vercel.json; the config says the Worker is deliberately UNROUTED until an owner attaches a route. The earlier text "Live at https://mivehchi.dev/battcal on Vercel project `battcal`" is in `docs/cloud-mirror.md`; whether it still serves is (unverified 2026-10-22).
+- `site/` stays on Vercel (`site/vercel.json`, project `battcal-site`).
+- Open (owner): are the six theme modes (System/Light/Dark/Midnight/Forest/Warm, enumerated in `dashboard/src/kit/ThemeProvider.tsx`) an intentional exception to the global three-mode decision? Current text kept under Project conventions.
+- Open (owner): attach the Cloudflare route for `battcal-mivehchi` (needs secrets SESSION_SECRET, PRSA_OIDC_CLIENT_SECRET, BATTCAL_SUPABASE_URL, BATTCAL_SUPABASE_SERVICE_KEY per wrangler.jsonc).
 
-npm workspaces at the repo root (`dashboard` + `cloud`) hoist ONE react 19.2.0 for
-both web builds; the engine/server/menubar are not npm packages.
-
-| Path | What |
-|---|---|
-| `bin/battcal-engine.sh` | The state machine (drain/charge/hold, modes, MagSafe LED scheme, telemetry) |
-| `server/server.mjs` | Zero-dep Node server: JSON API + serves `dashboard/dist` (port 4437) + optional cloud push |
-| `dashboard/` | Vite 7 + React 19 + Recharts SPA. `src/kit/` = vendored platform design system (5 themes, AppShell, primitives, chart config); `src/views/` = routed views (overview/health/genius-bar/activity/settings); `src/data/` = injected DataSource (live local vs read-only cloud) |
-| `cloud/` | Hosted mirror: Next 16, basePath `/battcal`, prsa.me OIDC gate, Supabase-backed read routes; mounts the SAME `dashboard/src/App` client-only |
-| `site/` | PUBLIC product page (mivehchi.app/battcal): Vite + React + Tailwind v4, base `/battcal/`, own Vercel project `battcal-site`; `api/contact.ts` = bot-gated Resend contact (the only server surface) |
-| `menubar/` | BattCalBar: SwiftUI MenuBarExtra app, XcodeGen project, icon generator script |
-| `swiftbar/` | Lightweight SwiftBar plugin alternative to the native app |
-| `install.sh` / `uninstall.sh` | Installer (installs PAUSED) / clean removal |
-
-## Build & run
-
+## Run, gate, deploy
+npm workspaces at the root (`dashboard`, `cloud`, `site`) hoist ONE react 19.2.0; engine/server/menubar are not npm packages.
 ```sh
-npm install                                     # at the REPO ROOT (workspaces; installs both apps)
-npm run build --prefix dashboard                # tsc -b && vite build
-npm --workspace cloud run build                 # Next build of the hosted mirror
-node server/server.mjs                          # dashboard at localhost:4437
-bash -n bin/battcal-engine.sh                   # engine syntax gate
-cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj \
-  -scheme BattCalBar -configuration Release -derivedDataPath build build
+npm install                          # at the REPO ROOT
+npm run build --prefix dashboard     # tsc -b && vite build
+npm --workspace cloud run build      # Next build of the hosted mirror
+node server/server.mjs               # dashboard at https://battcal.localhost (portless alias -> 4437, a legacy pin the registry audit flags)
+bash scripts/check.sh                # quality gate: bash -n, node --check, tsc, swiftc -parse, read-only smoke
 ```
+Menu bar (Xcode lives on the MBP only, see `rules/xcode-on-mbp.md`): `cd menubar && xcodegen && xcodebuild -project BattCalBar.xcodeproj -scheme BattCalBar -configuration Release -derivedDataPath build build`
+Deploy: `./deploy.sh [engine|server|dashboard|menubar|verify]` (default all; `--dry-run` plans only). Runs `scripts/check.sh` first and fails closed, verifies each surface, never changes charging. It detects the install (personal `battery-calibrate` vs OSS `battcal`) and derives paths and launchctl labels.
 
-## Deploy
+## Architecture map
+- `bin/battcal-engine.sh`: the state machine (drain/charge/hold, modes, MagSafe LED, telemetry). Single source; the deployed copy is GENERATED by a namespace transform, never hand-edit it.
+- `server/server.mjs`: zero-dep JSON API + serves `dashboard/dist` + optional cloud push.
+- `dashboard/`: Vite 7 + React 19 + Recharts; `src/kit/` vendored design system, `src/views/` routed views, `src/data/` injected DataSource (live local vs read-only cloud).
+- `cloud/`: hosted mirror, basePath `/battcal`, prsa.me OIDC gate, Supabase read routes; mounts the SAME `dashboard/src/App` client-only. Mechanics: `docs/cloud-mirror.md`.
+- `site/`: public page, Vite + React + Tailwind v4, base `/battcal/`; `api/contact.ts` is the only server surface.
+- `menubar/` BattCalBar (SwiftUI, XcodeGen); `swiftbar/` plugin alternative; `install.sh` installs PAUSED, `uninstall.sh` removes.
 
-`./deploy.sh` rebuilds and redeploys all live surfaces (engine, server, dashboard,
-menu bar) from the repo, verifies each with real evidence, and never changes charging.
-It detects the install (personal `battery-calibrate` vs OSS `battcal` namespace) and
-derives every path + launchctl label, so there are no hardcoded personal specifics.
+## Invariants (full explanations in `docs/engine-contracts.md`)
+- `batt status` is broken on macOS 26; use only `batt adapter enable|disable` and `batt magsafe-led`. Never parse it.
+- Charger detection: ioreg `AdapterDetails "Watts">0`, not `ExternalConnected`.
+- launchd agents hang (TCC) running scripts from ~/Desktop or ~/Documents; deploy to `~/.battcal/` or `~/Library/`.
+- Codesign: build, `ditto --norsrc --noextattr --noacl` to a clean path, `codesign --force --deep --sign -`.
+- MagSafe LED is amber+green only; signal with states, no custom colors. Installer defaults to PAUSED.
+- Server binds 127.0.0.1 on purpose (control plane must never be LAN-reachable; portless proxies over IPv4; commented at server.mjs). Every POST/DELETE needs header `x-battcal: 1`; no CORS.
+- `adapterCut` in `/api/status` is ground truth for "adapter cut"; never key on negative battery watts.
+- Engine EXIT trap re-enables the adapter on unmanaged death; deploy.sh touches `/var/tmp/<ns>.managed-restart` before kickstart.
+- Home-SSID default is EMPTY (privacy); losing the key turns gated cycling off at home (fail-safe).
+- at-home freshness is file MTIME with ATHOME_MAX_AGE=90s; the menu bar must keep rewriting at age > 60s.
+- Schedule pause: key "Off hours" on `pausedBy === 'schedule'`, never on breakUntil alone.
+- Cloud mirror: outbound-only push gated on `~/.battcal/cloud.json` (mode 600, NEVER committed); no control routes; the only write surface is the `battcal_commands` queue; the Mac is the sole authority.
 
-```sh
-./deploy.sh                 # = all: build + deploy + verify every present surface
-./deploy.sh [engine|server|dashboard|menubar|verify]
-./deploy.sh --dry-run       # print the detected install + planned actions, run nothing
-```
+## Project conventions
+Chart colors are the dataviz-skill palette (`dashboard/src/index.css`); axis helpers in `dashboard/src/chartUtils.ts`. Theme: System (default) / Light / Dark / Midnight / Forest / Warm (see Open (owner) above). Cloud auth kit follows the netstats basePath deviations; never hand-edit `cloud/app/login/*` (generated by the hub's `sync-rp-login.mjs`).
 
-The deployed engine copy is GENERATED from `bin/battcal-engine.sh` (single source of
-truth) by a surgical namespace transform; do NOT hand-edit the deployed copy.
+## Gotchas
+Extract signed apps with `ditto -x -k`, never `unzip`; never test `[ -d workspace/node_modules ]` (hoisted); LaunchAgents use `/opt/homebrew/opt/node/bin/node`; public repo means PR path, `auto-ship.sh` refuses it. More in `.claude/STATE.md`.
 
-## Cloud mirror (mivehchi.dev/battcal, owner install)
-
-- Live at https://mivehchi.dev/battcal behind prsa.me OIDC SSO (owner-only). Vercel
-  project `battcal` (team mivehchi, rootDirectory `cloud`, outside-root files ON,
-  GitHub-connected: push to main = production deploy). Stable alias
-  `battcal.vercel.app`; the apex repo `domains/mivehchi.dev` carries the two
-  `/battcal` rewrites. Login card is generated by the hub's `sync-rp-login.mjs`
-  (never hand-edit `cloud/app/login/*`).
-- Data: the Mac PUSHES (outbound only) to `battcal_*` tables in the prsa.me Supabase
-  project (hub migration `0022_battcal.sql`; RLS on, no policies = service-role only).
-  server.mjs's push loop is gated on `~/.battcal/cloud.json` ({url, serviceRoleKey},
-  mode 600, NEVER committed): status 30 s, telemetry 60 s incremental (cursor file
-  `~/.battcal/cloud-cursor`), cycles/log/evidence 5 min, 30 d telemetry purge.
-  Absent config = no-op, so OSS installs are unaffected.
-- The mirror has NO direct controls: `cloudDataSource` has no control methods and
-  `cloud/` ships no control routes. Direct controls exist only on the Mac
-  (battcal.localhost + menu bar). The one write surface is the remote command QUEUE:
-  `POST /battcal/api/command` (owner-gated) inserts a whitelisted intent row into
-  `battcal_commands` (hub migration 0023); server.mjs polls every 30 s, claims each
-  pending row via compare-and-set, RE-VALIDATES against its own whitelist (pause /
-  resume / mode / break 1-240m; rows older than 10 min expire), executes through the
-  same primitives as the local POST routes, settles the row (done/rejected/expired),
-  and pushes a fresh status doc. The Mac stays the sole authority; never add a cloud
-  route that mutates anything but that table. All personal values in `cloud/` are
-  env-driven (`cloud/.env.example`); the auth kit follows the netstats basePath
-  deviations (relative Locations, explicit "/" proxy matcher, /battcal redirect URI).
-
-## Hard-won constraints (do not regress)
-
-- `batt status` is broken on macOS 26 ("key has no data"); use only
-  `batt adapter enable|disable` and `batt magsafe-led ...`. Never parse batt status.
-- Physical-charger detection: `AdapterDetails "Watts">0` via ioreg. `ExternalConnected`
-  reads No while the adapter is software-cut.
-- launchd agents hang silently (TCC) running scripts from ~/Desktop or ~/Documents;
-  installers must deploy to `~/.battcal/` or `~/Library/`.
-- Codesign rejects bundles with `com.apple.provenance` xattrs: build, then
-  `ditto --norsrc --noextattr --noacl` to a clean path, then `codesign --force --deep --sign -`.
-- MagSafe LED hardware is amber+green only. The LED scheme signals with states
-  (dark = draining, pulse = calibration); custom colors are impossible.
-- Installer must default to PAUSED; never change a user's charging on install.
-- The engine runs from a deployed copy (personal `battery-calibrate` paths). It is
-  GENERATED from `bin/battcal-engine.sh` (the single source) by `./deploy.sh` via a
-  surgical namespace transform that leaves the shared `battcal-telemetry.csv` and
-  `~/.battcal/config` untouched. Edit ONLY `bin/battcal-engine.sh`, then `./deploy.sh`.
-- The server binds 127.0.0.1 and every POST/DELETE requires the `x-battcal: 1` header
-  (403 without): `curl -X POST -H "x-battcal: 1" http://localhost:4437/api/...`. No CORS
-  headers on purpose. GET stays open.
-- `/api/status` `adapterCut` (plugged && ExternalConnected=No) is the ground truth for
-  "BattCal cut the adapter"; UIs must key every "draining (adapter cut)" claim on it,
-  never on negative battery watts alone (a paused Mac under load briefly supplements a
-  maxed adapter).
-- The engine's EXIT trap re-enables the adapter on an UNMANAGED death; deploy.sh touches
-  `/var/tmp/<ns>.managed-restart` before its kickstart so deploys keep the drain phase.
-- The compiled-in home-SSID default is EMPTY (privacy). The owner's networks live in
-  `defaults read com.parsa.battcalbar homeSSIDs`; blanking or losing that key silently
-  turns gated cycling off at home (fail-safe away).
-- `scripts/check.sh` is the quality gate (bash -n all scripts, node --check, tsc,
-  swiftc -parse on menubar sources, read-only status smoke); `deploy.sh` runs it
-  first and fails closed.
-- The engine judges `/var/tmp/battcal-athome` freshness by file MTIME with
-  ATHOME_MAX_AGE=90s (stale = AWAY, fail-safe). The menu bar rewrites it on value
-  change OR mtime age > 60s; never make that write purely change-driven or home
-  cycling silently stops. The `battcal-wifi.ssid` breadcrumb has no freshness
-  contract and writes only on change.
-- Work schedule: `~/.battcal/schedule` (DAYS=12345 START=0800 END=1800, shared across
-  namespaces like config) gates cycling to a weekly window. The engine enforces it by
-  writing `<epoch> schedule` into the pause file (a timed pause until the next window
-  start); `/var/tmp/<ns>.schedule-phase` detects boundary crossings, and
-  `/var/tmp/<ns>.schedule-override` (touched by the server on every manual
-  pause/resume/break/mode/prep POST) suspends steady-state enforcement until the next
-  boundary ("manual wins until the boundary"). UIs must key "Off hours" on
-  `pausedBy === 'schedule'`, never on breakUntil alone - a schedule pause carries a
-  breakUntil epoch but is Normal charging, not a benchmark break.
-
-## Conventions
-
-Dashboard colors are the dataviz-skill validated palette (light + dark steps in
-`dashboard/src/index.css`); axis helpers in `dashboard/src/chartUtils.ts` (round
-wall-clock time ticks, padded stepped Y scales). Theme: System (default) / Light / Dark /
-Midnight / Forest / Warm.
-No em dashes anywhere. Named local URL: https://battcal.localhost (portless alias -> 4437).
+## Where history lives
+`progress/`, `.claude/STATE.md`, `.claude/planning/RESUME.md`, `docs/cloud-mirror.md`, `docs/engine-contracts.md`, `docs/HISTORY-claude-md-2026-10-22.md` (previous full CLAUDE.md).
