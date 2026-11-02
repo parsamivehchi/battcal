@@ -1,14 +1,75 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 type SendState = 'idle' | 'sending' | 'sent' | 'error';
 
+type TurnstileApi = {
+  render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+  reset: (id?: string) => void;
+};
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
+
+// Public Turnstile site key, injected at build time (VITE_TURNSTILE_SITE_KEY). Without it the
+// widget is not rendered; the server route still decides whether a token is required.
+const SITE_KEY = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) || '';
+const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+
+/** Renders the Cloudflare Turnstile widget once and exposes its single-use token. */
+function useTurnstile(siteKey: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const widgetId = useRef<string | null>(null);
+  const [token, setToken] = useState('');
+
+  useEffect(() => {
+    if (!siteKey) return;
+    let cancelled = false;
+    const render = () => {
+      if (cancelled || !ref.current || !window.turnstile || widgetId.current) return;
+      widgetId.current = window.turnstile.render(ref.current, {
+        sitekey: siteKey,
+        callback: (t: string) => setToken(t),
+        'expired-callback': () => setToken(''),
+        'error-callback': () => setToken(''),
+      });
+    };
+    if (window.turnstile) {
+      render();
+    } else {
+      let script = document.querySelector<HTMLScriptElement>(`script[src="${TURNSTILE_SRC}"]`);
+      if (!script) {
+        script = document.createElement('script');
+        script.src = TURNSTILE_SRC;
+        script.async = true;
+        script.defer = true;
+        document.head.appendChild(script);
+      }
+      script.addEventListener('load', render);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [siteKey]);
+
+  const reset = () => {
+    setToken('');
+    if (widgetId.current && window.turnstile) window.turnstile.reset(widgetId.current);
+  };
+  return { ref, token, reset };
+}
+
 // Commercial-licensing / question form. The owner's address never appears in the page
-// or the DOM: the serverless function holds it. Bot layers: Vercel BotID classification
-// server-side, a honeypot field, and a minimum-fill-time check seeded at mount.
+// or the DOM: the server route holds it. Bot layers: Cloudflare Turnstile (verified
+// server-side), a honeypot field, a minimum-fill-time check seeded at mount, and a per-IP
+// rate limit on the route.
 export function ContactForm() {
   const [state, setState] = useState<SendState>('idle');
   const [error, setError] = useState('');
   const mountedAt = useRef(Date.now());
+  const turnstile = useTurnstile(SITE_KEY);
+  const waitingForCheck = Boolean(SITE_KEY) && !turnstile.token;
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -20,7 +81,7 @@ export function ContactForm() {
       const res = await fetch(`${import.meta.env.BASE_URL}api/contact`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...data, t: mountedAt.current }),
+        body: JSON.stringify({ ...data, t: mountedAt.current, token: turnstile.token }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -31,6 +92,8 @@ export function ContactForm() {
     } catch (err) {
       setState('error');
       setError(err instanceof Error ? err.message : 'Something went wrong');
+      // A Turnstile token is single-use: get a fresh one for the retry.
+      turnstile.reset();
     }
   };
 
@@ -79,8 +142,14 @@ export function ContactForm() {
           Could not send: {error}. Try again in a minute.
         </p>
       )}
+      {SITE_KEY && <div ref={turnstile.ref} className="sm:col-span-2" />}
       <div className="sm:col-span-2">
-        <button type="submit" disabled={state === 'sending'} className="btn-primary" style={{ opacity: state === 'sending' ? 0.6 : 1 }}>
+        <button
+          type="submit"
+          disabled={state === 'sending' || waitingForCheck}
+          className="btn-primary"
+          style={{ opacity: state === 'sending' || waitingForCheck ? 0.6 : 1 }}
+        >
           {state === 'sending' ? 'Sending...' : 'Send message'}
         </button>
       </div>
