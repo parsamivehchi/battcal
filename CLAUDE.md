@@ -3,12 +3,12 @@
 ## What it is
 Cycles the battery inside a band (longevity 10-90% default, calibration 5-100% on demand) while plugged in, so cells never park at 100%. Surfaces: bash LaunchAgent engine, zero-dep Node server + Vite/React dashboard, SwiftUI menu bar app, SwiftBar plugin, optional hosted read-only mirror (`cloud/`, Next 16 shipped via OpenNext), public product page (`site/`, mivehchi.app/battcal). Public repo (PolyForm Noncommercial 1.0.0 since v1.3.0; earlier releases MIT): https://github.com/parsamivehchi/battcal
 
-## Current state (as of 2026-10-22)
+## Current state (as of 2026-11-01)
 - Latest tag v1.3.0. Newest progress entry: `progress/2026-08-26_053451_W6_battcalbar-on-demand-no-background-activity`. Open threads and failures: `.claude/STATE.md`.
-- `cloud/` has `wrangler.jsonc` (Worker `battcal-mivehchi`, @opennextjs/cloudflare) and no vercel.json; the config says the Worker is deliberately UNROUTED until an owner attaches a route. The earlier text "Live at https://mivehchi.dev/battcal on Vercel project `battcal`" is in `docs/cloud-mirror.md`; whether it still serves is (unverified 2026-10-22).
-- `site/` stays on Vercel (`site/vercel.json`, project `battcal-site`).
+- `cloud/` is served at https://mivehchi.dev/battcal by the Worker `battcal-mivehchi` (its three zone routes were repointed from the old mivehchi-dev-mounts router, which proxied to the Vercel project `battcal`). The four secrets in wrangler.jsonc are set.
+- `site/` is served at https://mivehchi.app/battcal from the mivehchi.app Worker's static assets (build here with `VITE_TURNSTILE_SITE_KEY`, rsync `dist/` into `domains/mivehchi.app/public/battcal/`); its contact form posts to the mivehchi.app route, which verifies Turnstile. `site/vercel.json` and `site/api/contact.ts` only serve the retiring Vercel project `battcal-site`.
+- Open (owner): one signed-in check on https://mivehchi.dev/battcal, then pause and delete the Vercel projects `battcal` and `battcal-site` (they are the rollback path).
 - Open (owner): are the six theme modes (System/Light/Dark/Midnight/Forest/Warm, enumerated in `dashboard/src/kit/ThemeProvider.tsx`) an intentional exception to the global three-mode decision? Current text kept under Project conventions.
-- Open (owner): attach the Cloudflare route for `battcal-mivehchi` (needs secrets SESSION_SECRET, PRSA_OIDC_CLIENT_SECRET, BATTCAL_SUPABASE_URL, BATTCAL_SUPABASE_SERVICE_KEY per wrangler.jsonc).
 
 ## Run, gate, deploy
 npm workspaces at the root (`dashboard`, `cloud`, `site`) hoist ONE react 19.2.0; engine/server/menubar are not npm packages.
