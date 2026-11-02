@@ -61,8 +61,10 @@ function useTurnstile(siteKey: string) {
 }
 
 // Commercial-licensing / question form. The owner's address never appears in the page
-// or the DOM: the server route holds it. Bot layers: Cloudflare Turnstile (verified
-// server-side), a honeypot field, a minimum-fill-time check seeded at mount, and a per-IP
+// or the DOM: the server route holds it. Bot layers: Cloudflare Turnstile (verified by the
+// mivehchi.app route app/battcal/api/contact/route.ts, fail closed; the retired Vercel
+// function site/api/contact.ts does not check it), a honeypot field, a minimum-fill-time
+// check seeded at mount, and a per-IP
 // rate limit on the route.
 export function ContactForm() {
   const [state, setState] = useState<SendState>('idle');
